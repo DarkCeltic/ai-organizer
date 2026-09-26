@@ -10,7 +10,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-
 from exapp.routes.analyze import router as analyze_router
 from exapp.routes.apply import router as apply_router
 from exapp.routes.file_action import router as file_action_router
@@ -51,6 +50,7 @@ async def log_http_error(request, exc):
 
     return await http_exception_handler(request, exc)
 
+
 @app.middleware("http")
 async def log_all_requests(request: Request, call_next):
     log.info(
@@ -70,6 +70,7 @@ async def log_all_requests(request: Request, call_next):
 
     return response
 
+
 app.state.organizer = Organizer(
     config_file=CONFIG_FILE, runtime_settings=RUNTIME_SETTINGS
 )
@@ -77,9 +78,11 @@ app.state.organizer.database.initialize()
 app.state.settings = SettingsService(app.state.organizer)
 app.state.scheduler = AutomationScheduler(app)
 
+
 @app.on_event('startup')
 def start_automation():
     app.state.scheduler.start()
+
 
 @app.on_event('shutdown')
 def stop_automation():
@@ -96,6 +99,7 @@ app.include_router(analyze_router)
 app.include_router(apply_router)
 app.include_router(dashboard_router)
 app.include_router(settings_router)
+
 
 def _appapi_headers():
     if not APP_SECRET:
@@ -171,6 +175,7 @@ def _ocs(method, path, json=None, allow_404=False):
         )
 
     return data
+
 
 def register_ui() -> None:
     log.info("Registering AI Organizer UI")
@@ -303,11 +308,6 @@ def heartbeat():
     return {"status": "ok"}
 
 
-@app.post("/init")
-def init():
-    return {}
-
-
 @app.put("/enabled")
 def enabled(enabled: int = 1):
     try:
@@ -328,6 +328,8 @@ def enabled(enabled: int = 1):
             status_code=500,
             content={"error": str(exc)}
         )
+
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/organize", response_class=HTMLResponse)
 def ui(request: Request):
