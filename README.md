@@ -1,10 +1,10 @@
-# AI Organizer for Nextcloud
+# AI Organizer
 
 **Organize your Nextcloud files with a local AI, without handing the final decision to the model.**
 
 AI Organizer is a self-hosted [Nextcloud](https://nextcloud.com/) external app (ExApp) that uses [Ollama](https://ollama.com/) to read supported files and propose meaningful filenames, destination folders, tags, and optional routing to [Paperless-ngx](https://docs.paperless-ngx.com/). Review and edit each recommendation before applying it. A SQLite-backed history preserves previous decisions and file details so that reanalysis does not erase the past.
 
-> **Project status:** Early development (app metadata: `0.1.0`). This project has been developed and tested in a personal self-hosted environment; it is not presented as a turnkey or production-hardened release. Review recommendations and back up your Nextcloud data and organizer database before using it on important files.
+> **Project status:** Early development (app metadata: `0.1.2`). This project has been developed and tested in a personal self-hosted environment; it is not presented as a turnkey or production-hardened release. Review recommendations and back up your Nextcloud data and organizer database before using it on important files.
 
 ## Highlights
 
@@ -64,127 +64,78 @@ The sidebar switches the active view. The right side displays that view's file l
 - A reachable Ollama server with a downloaded model, such as `qwen2.5:7b`.
 - A persistent location for the organizer's SQLite database.
 - **Optional:** Paperless-ngx and a consume folder accessible through the configured Nextcloud path.
-- **Optional:** `ocrmypdf` and its system dependencies for image-only/scanned PDFs. The current base Dockerfile does not install that OCR toolchain yet, so OCR will report a clear Failed-state error until an OCR-capable image is built.
+- PDF OCR support. The published Dockerfile installs OCRmyPDF plus Tesseract, Ghostscript, and qpdf so image-only PDFs can use the bounded OCR fallback.
 
 Ollama can run on another host on your LAN. Use an address reachable **from the ExApp container**, not `localhost` unless Ollama actually runs inside that same network namespace. Your files' extracted text is sent to whichever Ollama endpoint you configure, so use a server you trust.
 
 ## Installation and configuration
 
-The repository separates **deployment settings** from **organizer behavior**:
+AI Organizer supports three deployment workflows. **AppAPI + HaRP is the recommended path** because it matches how an eventual App Store installation is managed. Docker Compose is available for advanced/manual deployments, and running from source is intended for development.
 
-- `.env` / container environment: service addresses, user credentials, AppAPI credentials, and the initial Paperless enable/disable choice.
-- `config.yaml`: non-secret behavior defaults such as scan paths, timeouts, classifier limits, Paperless category policy, and the SQLite path.
-- SQLite-backed Settings UI: administrator changes made after installation. Saved UI values take precedence over the corresponding initial Ollama/Paperless defaults on later restarts.
+### Recommended: AppAPI + HaRP
 
-### 1. Create your private `.env`
+The ExApp ID is `ai_organizer`. The release manifest points AppAPI to `darthdragon/ai-organizer:0.1.2`.
 
-Copy `.env.example` to `.env` and fill in your own values. The real `.env` is intentionally excluded by both `.gitignore` and `.dockerignore`.
+AppAPI supplies the ExApp lifecycle values automatically, including `APP_ID`, `APP_VERSION`, `APP_SECRET`, `APP_HOST`, `APP_PORT`, `APP_PERSISTENT_STORAGE`, and `NEXTCLOUD_URL`. The administrator supplies only AI Organizer's deployment-specific settings:
+
+```text
+NEXTCLOUD_USERNAME
+NEXTCLOUD_APP_PASSWORD
+OLLAMA_URL
+OLLAMA_MODEL
+PAPERLESS_ENABLED
+INBOX_PATH            # only needed when Paperless routing is enabled/customized
+```
+
+For a pre-App-Store installation, register the published `info.xml` with your HaRP deploy daemon and pass your environment values through AppAPI's deploy options or `--env` arguments. AppAPI then pulls the Docker image and creates the container.
+
+When HaRP variables are present, the container automatically starts the FRP client and serves FastAPI through `/tmp/exapp.sock`. For manual/Compose deployments without HaRP, it falls back to normal TCP using `APP_HOST`/`APP_PORT`.
+
+AI Organizer stores its SQLite database under `APP_PERSISTENT_STORAGE` when AppAPI supplies that path. This preserves Review, History, Failed records, and saved settings across container replacement and upgrades.
+
+### Advanced: Docker Compose / Portainer
+
+Copy `.env.example` to `.env`, provide your own values, and optionally copy `config.example.yaml` to `config.yaml` for non-secret behavior changes.
 
 ```env
-# Required for a new installation. Neither value has a model/server default.
 OLLAMA_URL=http://192.168.1.2:11434
-OLLAMA_MODEL=YOUR_INSTALLED_MODEL
-
-# Optional. If omitted, the initial value is false.
+OLLAMA_MODEL=qwen2.5:7b
 PAPERLESS_ENABLED=false
+INBOX_PATH=
 
-# Current direct WebDAV/OCS client authentication.
 NEXTCLOUD_URL=http://192.168.1.2:8080
 NEXTCLOUD_USERNAME=YOUR_NEXTCLOUD_USER
 NEXTCLOUD_APP_PASSWORD=YOUR_NEXTCLOUD_APP_PASSWORD
 
-# AppAPI identity/secret. APP_SECRET is NOT the user's Nextcloud app password.
-# AppAPI normally supplies these for a managed ExApp deployment.
+# Required only for a manually registered AppAPI ExApp.
 APP_SECRET=YOUR_EXISTING_APPAPI_SECRET
-APP_USER=admin
 ```
 
-`OLLAMA_URL` should be an address reachable **from inside the ExApp container**. `localhost` points back to the AI Organizer container itself, so it is normally incorrect when Ollama runs on another host or container.
+`APP_USER` is optional and defaults to `NEXTCLOUD_USERNAME`. Do not confuse the AppAPI-generated `APP_SECRET` with the Nextcloud user app password used by the direct WebDAV client.
 
-The project deliberately does **not** choose an Ollama model for the user. `OLLAMA_MODEL` must name a model that already exists on the configured Ollama server.
-
-### 2. Create non-secret `config.yaml`
-
-For a repository/Compose deployment, copy `config.example.yaml` to `config.yaml`. Do not put passwords, app secrets, or deployment URLs in this file.
-
-```yaml
-nextcloud:
-  verify_ssl: true
-  timeout: 60
-  folder_tree_paths:
-    - "/"
-
-scanner:
-  scan_paths:
-    - "/AI Inbox"
-  exclude_paths:
-    - "/paperless-media"
-    - "/inbox"
-    - "/Photos"
-    - "/AI Ignored"
-  allowed_extensions:
-    - pdf
-    - txt
-    - md
-    - docx
-    - odt
-    - rtf
-    - log
-    - csv
-    - json
-    - xml
-    - xlsx
-
-ollama:
-  timeout: 180
-  temperature: 0
-
-classifier:
-  max_content_chars: 8000
-  max_folder_entries: 500
-  max_tag_entries: 200
-  minimum_confidence: 0.70
-
-paperless:
-  inbox_path: "/inbox"
-  never_send:
-    - resume
-    - cv
-    - curriculum vitae
-    - cover letter
-    - portfolio
-    - source_code
-    - project
-    - template
-  prefer_send:
-    - receipt
-    - invoice
-    - statement
-    - tax
-    - insurance
-    - contract
-    - warranty
-
-database:
-  path: "/app/data/python_organizer_local_llm.db"
-```
-
-The Docker image copies the sanitized `config.example.yaml` to `/app/config.yaml`, so a clean GitHub/Docker build never depends on the ignored private `config.yaml` file. A manual Compose deployment may mount your own non-secret `config.yaml` over that path.
-
-### 3. Build and test the container
-
-```bash
-docker build -t ai-nextcloud-organizer:test .
-docker run --rm --env-file .env ai-nextcloud-organizer:test
-```
-
-For manual Compose/Portainer deployment, the default mount uses `config.example.yaml`. If you want a customized non-secret file, copy it to `config.yaml` and set `AI_ORGANIZER_CONFIG_FILE=./config.yaml` in `.env`, then run:
+Start the manual container with:
 
 ```bash
 docker compose up -d
 ```
 
-The Compose file keeps `/app/data` on the `ai_organizer_data` volume. Back up that volume/database before upgrades that change storage behavior or schema.
+The Compose file defaults to `darthdragon/ai-organizer:latest`, stores runtime state on the `ai_organizer_data` volume, and does not publish a host port. It is intended for users who already understand manual AppAPI registration; do not run it alongside an AppAPI-managed instance of the same ExApp.
+
+### Developer: run from source
+
+Install the Python dependencies, copy `.env.example` to `.env`, provide the required values, and run:
+
+```bash
+uvicorn exapp.main:app --host 0.0.0.0 --port 23000
+```
+
+For local source development with Nextcloud, register the process through a `manual-install` deploy daemon. Do not expose the development server directly to the internet.
+
+### Configuration files
+
+Deployment-specific addresses and credentials belong in environment variables. `config.example.yaml` contains non-secret behavior defaults such as scan roots, file types, timeouts, Paperless category policy, and the manual Docker database path.
+
+The Docker image includes a sanitized `/app/config.yaml`, so building from a clean checkout never depends on a private ignored `config.yaml`. For Compose you may override it with `AI_ORGANIZER_CONFIG_FILE=./config.yaml`.
 
 ### Environment variables
 
@@ -192,27 +143,23 @@ All direct environment access is centralized in `python_organizer_local_llm/sett
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `OLLAMA_URL` | Ollama server reachable from the ExApp container. Required for a new install unless an existing saved/legacy configuration supplies it. | none |
-| `OLLAMA_MODEL` | Ollama model to use. Required for a new install unless already saved/configured. | none |
-| `PAPERLESS_ENABLED` | Initial Paperless integration state. The Settings UI can later persist a different value in SQLite. | `false` |
-| `NEXTCLOUD_URL` | Nextcloud base URL used by AppAPI calls and the direct Nextcloud client. | none |
-| `NEXTCLOUD_USERNAME` | Nextcloud user used by the current direct WebDAV/OCS client. | none |
-| `NEXTCLOUD_APP_PASSWORD` | Nextcloud **user app password** for WebDAV/OCS. Keep private. | none |
-| `APP_SECRET` | AppAPI shared secret for ExApp-to-AppAPI calls. This is not `NEXTCLOUD_APP_PASSWORD`. | none |
-| `APP_USER` | AppAPI registration user used by the current registration request. | `admin` |
-| `APP_ID` | ExApp identifier. | `ai_nextcloud_organizer` |
-| `APP_VERSION` | ExApp version used by the FastAPI/AppAPI headers. | `0.1.0` |
+| `OLLAMA_URL` | Ollama server reachable from the ExApp container. | none |
+| `OLLAMA_MODEL` | Ollama model to use. | none |
+| `PAPERLESS_ENABLED` | Initial Paperless integration state. | `false` |
+| `INBOX_PATH` | Paperless consume folder. May be empty when Paperless is disabled. | `/inbox` after settings initialization |
+| `NEXTCLOUD_URL` | Nextcloud base URL. AppAPI supplies this for managed deployments. | none |
+| `NEXTCLOUD_USERNAME` | Account used by the current direct WebDAV/OCS client. | none |
+| `NEXTCLOUD_APP_PASSWORD` | Nextcloud user app password for WebDAV/OCS. | none |
+| `APP_SECRET` | AppAPI shared secret. AppAPI supplies this for managed deployments. | none |
+| `APP_USER` | User ID placed in AppAPI authentication headers. | `NEXTCLOUD_USERNAME`, then `admin` |
+| `APP_ID` | ExApp identifier. AppAPI supplies this for managed deployments. | `ai_organizer` |
+| `APP_VERSION` | ExApp version. AppAPI supplies this for managed deployments. | `0.1.2` |
+| `APP_PERSISTENT_STORAGE` | AppAPI-managed persistent data path. | manual config database path when absent |
 | `AA_VERSION` | AppAPI protocol header version. | `4.0.0` |
-| `AI_ORGANIZER_CONFIG` | Non-secret YAML configuration path inside the container. | `config.yaml` |
-| `LOG_LEVEL` | Logging verbosity. `DEBUG` enables debug logging; other values use normal INFO logging. | `INFO` |
+| `AI_ORGANIZER_CONFIG` | Non-secret YAML configuration path. | `config.yaml` |
+| `LOG_LEVEL` | Logging verbosity. | `INFO` |
 
-For local Python development, install `requirements.txt`, provide the same environment variables, and start:
-
-```bash
-uvicorn exapp.main:app --host 0.0.0.0 --port 23000
-```
-
-Binding to `0.0.0.0` exposes the development service on reachable interfaces. Use a suitable firewall and do not publish the ExApp directly to the internet.
+`OLLAMA_URL` must be reachable from inside the container. `localhost` normally points to the AI Organizer container itself, not to an Ollama service on another machine.
 
 ## Paperless behavior
 

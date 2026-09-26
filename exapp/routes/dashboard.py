@@ -1,4 +1,4 @@
-"""Read-only Unprocessed and Review endpoints for Nextcloud AI Organizer.
+"""Read-only Unprocessed and Review endpoints for AI Organizer.
 
 Install as exapp/routes/dashboard.py. Supports ?debug=true diagnostics.
 """

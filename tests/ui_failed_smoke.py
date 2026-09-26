@@ -22,7 +22,7 @@ def main():
 
     def mock(route):
         parsed = urlparse(route.request.url)
-        endpoint = parsed.path.split('/ai_nextcloud_organizer/')[-1]
+        endpoint = parsed.path.split('/ai_organizer/')[-1]
         q = parse_qs(parsed.query)
         data = {}
         code = 200
@@ -98,7 +98,7 @@ def main():
                                     headless=True, args=['--no-sandbox'])
         page = browser.new_page(viewport={'width': 1440, 'height': 900})
         page.on('pageerror', lambda err: errors.append(str(err)))
-        page.route('**/apps/app_api/proxy/ai_nextcloud_organizer/**', mock)
+        page.route('**/apps/app_api/proxy/ai_organizer/**', mock)
         page.set_content('''<html><head><base href="http://127.0.0.1:18080/"></head><body><div id="content" class="app-app_api">
             <main id="ai_organize"><header class="app-header"><h1>AI Organizer</h1>
             <button id="reanalyze" disabled>Re-analyze</button></header>

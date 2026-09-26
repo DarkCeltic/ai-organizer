@@ -1,4 +1,4 @@
-"""Read-only History API for Nextcloud AI Organizer.
+"""Read-only History API for AI Organizer.
 
 Place at exapp/routes/history.py and include the router in exapp/main.py.
 This endpoint reads SQLite only. It never contacts Nextcloud or changes file state.

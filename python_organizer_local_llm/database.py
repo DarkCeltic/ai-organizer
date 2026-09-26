@@ -20,7 +20,7 @@ class Database:
 
         db_config = self.config.get("database", {})
         self.path = Path(
-            db_config.get("path", "/data/python_organizer_local_llm.db")
+            db_config.get("path", "/app/data/ai_organizer.db")
         )
 
     def initialize(self) -> None:

@@ -2,7 +2,7 @@
 # of the same ExApp. Set AI_ORGANIZER_IMAGE to a Docker Hub image when desired.
 services:
   ai-organizer:
-    image: ${AI_ORGANIZER_IMAGE:-ai-nextcloud-organizer:latest}
+    image: ${AI_ORGANIZER_IMAGE:-darthdragon/ai-organizer:latest}
     container_name: ai-organizer-manual
     restart: unless-stopped
     init: true
@@ -10,6 +10,7 @@ services:
       AI_ORGANIZER_CONFIG: /app/config.yaml
       APP_HOST: 0.0.0.0
       APP_PORT: "23000"
+      APP_PERSISTENT_STORAGE: /app/data
       NEXTCLOUD_URL: ${NEXTCLOUD_URL:?Set NEXTCLOUD_URL in .env}
       NEXTCLOUD_APP_PASSWORD: ${NEXTCLOUD_APP_PASSWORD:?Set NEXTCLOUD_APP_PASSWORD in .env}
       NEXTCLOUD_USERNAME: ${NEXTCLOUD_USERNAME:?Set NEXTCLOUD_USERNAME in .env}
@@ -17,7 +18,6 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:?Set OLLAMA_MODEL in .env}
       PAPERLESS_ENABLED: ${PAPERLESS_ENABLED:-false}
       APP_SECRET: ${APP_SECRET:?Supply the existing AppAPI registration secret}
-      APP_USER: ${APP_USER:-admin}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ai_organizer_data:/app/data
@@ -30,13 +30,7 @@ services:
     networks:
       nextcloud-net:
         aliases:
-          - ai_nextcloud_organizer
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:23000/heartbeat',timeout=5)"]
-      interval: 30s
-      timeout: 8s
-      retries: 3
-      start_period: 20s
+          - ai_organizer
     security_opt:
       - no-new-privileges:true
 

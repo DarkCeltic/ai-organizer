@@ -1,8 +1,8 @@
-/** Nextcloud AI Organizer: sidebar, independently scrolling file list and details. */
+/** AI Organizer: sidebar, independently scrolling file list and details. */
 (() => {
     'use strict';
 
-    const API_BASE = '/apps/app_api/proxy/ai_nextcloud_organizer/';
+    const API_BASE = '/apps/app_api/proxy/ai_organizer/';
     const VIEWS = ['unprocessed', 'review', 'failed', 'history', 'settings'];
     const APPLY_ACTIONS = ['filename', 'folder', 'tags'];
     const HISTORY_STATUSES = ['all', 'applied', 'rejected', 'ignored', 'deleted', 'superseded'];

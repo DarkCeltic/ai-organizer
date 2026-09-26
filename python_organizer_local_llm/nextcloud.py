@@ -20,7 +20,7 @@ from python_organizer_local_llm.settings import EnvironmentSettings, load_enviro
 
 class NextcloudClient:
     """
-    Direct Nextcloud client for the AI python_organizer_local_llm.
+    Direct Nextcloud client for AI Organizer.
 
     Uses:
       - WebDAV for listing and downloading files
@@ -103,7 +103,7 @@ class NextcloudClient:
         self.session.auth = (self.username, self.password)
         self.session.headers.update(
             {
-                "User-Agent": "Nextcloud-AI-Organizer/0.1",
+                "User-Agent": "AI-Organizer/0.1",
                 "OCS-APIRequest": "true",
             }
         )
@@ -760,14 +760,13 @@ class NextcloudClient:
         )
 
         if response.status_code >= 400:
+            # Do not log the response body here: WebDAV error pages can include
+            # file paths or other account-specific details.
             self.log.error(
-                "Nextcloud SEARCH failed for file ID %s "
-                "(HTTP %s): %s",
+                "Nextcloud SEARCH failed for file ID %s (HTTP %s)",
                 file_id,
                 response.status_code,
-                response.text[:1000],
             )
-
             response.raise_for_status()
 
         if response.status_code != 207:

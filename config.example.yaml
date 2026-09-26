@@ -1,4 +1,4 @@
-# Nextcloud AI Organizer
+# AI Organizer
 #
 # Deployment-specific addresses and credentials belong in environment variables
 # (.env for local/manual Docker testing). This file contains only non-secret

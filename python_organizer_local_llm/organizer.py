@@ -30,7 +30,7 @@ def configure_logging(verbose: bool = False) -> None:
 
 class Organizer:
     """
-    Main coordinator for the Nextcloud AI Organizer.
+    Main coordinator for the AI Organizer.
 
     Workflow:
         Nextcloud
@@ -79,6 +79,15 @@ class Organizer:
         # If your existing modules use different constructor signatures,
         # upload them with this file and they can be matched exactly.
         self.database = Database(config_file)
+        # AppAPI mounts a per-ExApp persistent volume and supplies its path in
+        # APP_PERSISTENT_STORAGE. Prefer it for SQLite so Review/History/Settings
+        # survive container replacement and upgrades. Manual/Compose deployments
+        # keep using the database.path value from config.yaml.
+        if self.runtime_settings.persistent_storage:
+            self.database.path = (
+                Path(self.runtime_settings.persistent_storage) / "ai_organizer.db"
+            )
+
         self.nextcloud = NextcloudClient(
             config_file, runtime_settings=self.runtime_settings
         )
@@ -89,7 +98,9 @@ class Organizer:
         paperless_config = self.classifier.config.get("paperless", {})
         self.paperless_enabled = self.classifier.paperless_enabled
         self.paperless_inbox = str(
-            paperless_config.get("inbox_path", "/inbox")
+            self.runtime_settings.paperless_inbox
+            or paperless_config.get("inbox_path")
+            or "/inbox"
         ).strip() or "/inbox"
         if not self.paperless_inbox.startswith("/"):
             self.paperless_inbox = "/" + self.paperless_inbox
@@ -531,7 +542,7 @@ def print_scan_summary(organizer: Organizer) -> int:
     )
 
     print()
-    print("Nextcloud AI Organizer Scan Summary")
+    print("AI Organizer Scan Summary")
     print("=" * 40)
     print(f"Total files:     {summary.get('total', 0)}")
     print(f"Eligible:        {summary.get('eligible', 0)}")

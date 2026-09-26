@@ -115,9 +115,13 @@ class Classifier:
             else bool(paperless_config.get("enabled", False))
         )
 
-        self.paperless_inbox = (
+        self.paperless_inbox = str(
             runtime.paperless_inbox
-        )
+            or paperless_config.get("inbox_path")
+            or "/inbox"
+        ).strip()
+        if not self.paperless_inbox.startswith("/"):
+            self.paperless_inbox = "/" + self.paperless_inbox
 
         never_send = paperless_config.get(
             "never_send",

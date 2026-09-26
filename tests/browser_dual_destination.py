@@ -18,7 +18,7 @@ window.settings={ollama_url:'http://localhost:11434',model:'qwen2.5:7b',timeout:
  auto_apply:false,auto_apply_warning_accepted:false,minimum_auto_confidence:.95,
  global_instructions:'',folder_rules:[],paperless_enabled:true,paperless_inbox:'/consume',paperless_prefer_send:['receipt']};
 window.fetch=async(url,options={})=>{
- const path=url.split('/ai_nextcloud_organizer/').pop();
+ const path=url.split('/ai_organizer/').pop();
  const body=options.body ? JSON.parse(options.body) : null;
  window.requests.push({path,body});
  let payload={};let status=200;

@@ -125,7 +125,7 @@ def test_compose_and_config_contain_no_embedded_secret():
     import yaml
     compose = yaml.safe_load((root / 'compose.yaml').read_text())
     assert compose['services']['ai-organizer']['volumes'][0] == 'ai_organizer_data:/app/data'
-    assert 'ai-nextcloud-organizer:latest' in compose['services']['ai-organizer']['image']
+    assert compose['services']['ai-organizer']['image'] == '${AI_ORGANIZER_IMAGE:-darthdragon/ai-organizer:latest}'
     dockerfile = (root / 'Dockerfile').read_text()
     assert 'COPY config.example.yaml /app/config.yaml' in dockerfile
     dockerignore = (root / '.dockerignore').read_text()
@@ -140,7 +140,7 @@ def test_compose_and_config_contain_no_embedded_secret():
 def test_environment_settings_have_no_ollama_model_default(monkeypatch):
     for name in (
         'OLLAMA_URL', 'OLLAMA_MODEL', 'PAPERLESS_ENABLED', 'NEXTCLOUD_URL',
-        'NEXTCLOUD_USERNAME', 'NEXTCLOUD_APP_PASSWORD',
+        'NEXTCLOUD_USERNAME', 'NEXTCLOUD_APP_PASSWORD', 'APP_PERSISTENT_STORAGE',
     ):
         monkeypatch.delenv(name, raising=False)
     env = load_environment_settings(load_env_file=False)
@@ -157,12 +157,15 @@ def test_environment_settings_parse_runtime_values(monkeypatch):
     monkeypatch.setenv('NEXTCLOUD_URL', 'http://192.168.1.3:8080/')
     monkeypatch.setenv('NEXTCLOUD_USERNAME', 'tester')
     monkeypatch.setenv('NEXTCLOUD_APP_PASSWORD', 'secret-value')
+    monkeypatch.setenv('APP_PERSISTENT_STORAGE', '/nc_app_ai_organizer_data')
     env = load_environment_settings(load_env_file=False)
     assert env.ollama_url == 'http://192.168.1.2:11434'
     assert env.ollama_model == 'local-model:7b'
     assert env.paperless_enabled is True and env.paperless_enabled_from_env is True
     assert env.nextcloud_url == 'http://192.168.1.3:8080'
     assert env.nextcloud_username == 'tester'
+    assert env.app_user == 'tester'
+    assert env.persistent_storage == '/nc_app_ai_organizer_data'
     assert 'secret-value' not in repr(env)
 
 
@@ -177,3 +180,37 @@ def test_environment_reads_are_centralized_in_settings_module():
             if 'os.getenv(' in source or 'os.environ[' in source:
                 offenders.append(str(path.relative_to(root)))
     assert offenders == []
+
+
+def test_organizer_prefers_appapi_persistent_storage(tmp_path, monkeypatch):
+    """Managed deployments must not keep SQLite in the replaceable image layer."""
+    from python_organizer_local_llm.organizer import Organizer
+    from python_organizer_local_llm.settings import EnvironmentSettings
+    import python_organizer_local_llm.organizer as organizer_module
+
+    config = tmp_path / 'config.yaml'
+    config.write_text('database:\n  path: "/app/data/fallback.db"\n')
+    persistent = tmp_path / 'managed-data'
+
+    class DummyNextcloud:
+        def __init__(self, *args, **kwargs):
+            self.scan_paths = ['/AI Inbox']
+            self.exclude_paths = []
+
+    class DummyClassifier:
+        def __init__(self, *args, **kwargs):
+            self.config = {'paperless': {}}
+            self.paperless_enabled = False
+
+    class DummyScanner:
+        def __init__(self, **kwargs):
+            self.scan_paths = ['/AI Inbox']
+            self.exclude_paths = []
+
+    monkeypatch.setattr(organizer_module, 'NextcloudClient', DummyNextcloud)
+    monkeypatch.setattr(organizer_module, 'Classifier', DummyClassifier)
+    monkeypatch.setattr(organizer_module, 'Scanner', DummyScanner)
+
+    runtime = EnvironmentSettings(persistent_storage=str(persistent))
+    organizer = Organizer(str(config), runtime_settings=runtime)
+    assert organizer.database.path == persistent / 'ai_organizer.db'

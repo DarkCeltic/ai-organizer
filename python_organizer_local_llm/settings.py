@@ -25,14 +25,15 @@ class EnvironmentSettings:
     payload.
     """
 
-    app_id: str = "ai_nextcloud_organizer"
-    app_version: str = "0.1.0"
+    app_id: str = "ai_organizer"
+    app_version: str = "0.1.2"
     app_api_version: str = "4.0.0"
     app_secret: str = field(default="", repr=False)
     app_user: str = "admin"
     nextcloud_url: str = ""
     nextcloud_username: str = ""
     nextcloud_app_password: str = field(default="", repr=False)
+    persistent_storage: str = ""
     config_file: str = "config.yaml"
     log_level: str = "INFO"
     ollama_url: str = ""
@@ -96,6 +97,7 @@ def load_environment_settings(*, load_env_file: bool = True) -> EnvironmentSetti
 
     paperless_enabled, paperless_explicit = _env_bool("PAPERLESS_ENABLED", False)
     paperless_inbox = _env("INBOX_PATH")
+    nextcloud_username = _env("NEXTCLOUD_USERNAME")
     nextcloud_url = _env("NEXTCLOUD_URL").rstrip("/")
     ollama_url = _env("OLLAMA_URL").rstrip("/")
 
@@ -105,14 +107,15 @@ def load_environment_settings(*, load_env_file: bool = True) -> EnvironmentSetti
         _validate_http_origin("OLLAMA_URL", ollama_url)
 
     return EnvironmentSettings(
-        app_id=_env("APP_ID", "ai_nextcloud_organizer"),
-        app_version=_env("APP_VERSION", "0.1.0"),
+        app_id=_env("APP_ID", "ai_organizer"),
+        app_version=_env("APP_VERSION", "0.1.2"),
         app_api_version=_env("AA_VERSION", "4.0.0"),
         app_secret=_env("APP_SECRET"),
-        app_user=_env("APP_USER", "admin"),
+        app_user=_env("APP_USER", nextcloud_username or "admin"),
         nextcloud_url=nextcloud_url,
-        nextcloud_username=_env("NEXTCLOUD_USERNAME"),
+        nextcloud_username=nextcloud_username,
         nextcloud_app_password=_env("NEXTCLOUD_APP_PASSWORD"),
+        persistent_storage=_env("APP_PERSISTENT_STORAGE"),
         config_file=_env("AI_ORGANIZER_CONFIG", "config.yaml"),
         log_level=_env("LOG_LEVEL", "INFO").upper(),
         ollama_url=ollama_url,
@@ -183,7 +186,11 @@ class SettingsService:
             'folder_rules': [],
             'paperless_enabled': (runtime.paperless_enabled if runtime.paperless_enabled_from_env
                                   else bool(config.get('paperless', {}).get('enabled', False))),
-            'paperless_inbox': str(config.get('paperless', {}).get('inbox_path', '/inbox')),
+            'paperless_inbox': str(
+                stored.get('paperless_inbox')
+                or runtime.paperless_inbox
+                or config.get('paperless', {}).get('inbox_path', '/inbox')
+            ),
             'paperless_prefer_send': list(prefer_send),
         }
 

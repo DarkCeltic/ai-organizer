@@ -35,7 +35,7 @@ APP_USER = RUNTIME_SETTINGS.app_user
 configure_logging(RUNTIME_SETTINGS.debug_logging)
 log = logging.getLogger("exapp")
 
-app = FastAPI(title="Nextcloud AI Organizer", version=APP_VERSION)
+app = FastAPI(title="AI Organizer", version=APP_VERSION)
 
 
 @app.exception_handler(StarletteHTTPException)

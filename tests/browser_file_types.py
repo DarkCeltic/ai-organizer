@@ -19,7 +19,7 @@ window.catalog=[
  {id:'xlsx',label:'Excel spreadsheets',extensions:['.xlsx'],description:'Workbook cell text',mime_types:['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']},
  {id:'credential',label:'Credential / secret filenames',extensions:[],description:'Never send contents to AI',mime_types:[]}];
 window.fetch=async(url,options={})=>{
- const path=url.split('/ai_nextcloud_organizer/').pop();
+ const path=url.split('/ai_organizer/').pop();
  const body=options.body ? JSON.parse(options.body) : null;
  window.requests.push({path,body});
  if(path==='api/settings' && options.method==='PUT') {

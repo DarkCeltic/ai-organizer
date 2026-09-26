@@ -27,7 +27,7 @@ def fake_api(route):
     from urllib.parse import urlparse, parse_qs
     url = urlparse(route.request.url)
     q = parse_qs(url.query)
-    suffix = url.path.split('/ai_nextcloud_organizer/')[-1]
+    suffix = url.path.split('/ai_organizer/')[-1]
     if suffix == 'api/dashboard/unprocessed':
         data = {'items': [UNPROCESSED], 'count': 1}
     elif suffix == 'api/dashboard/review':
@@ -61,7 +61,7 @@ def main():
                                     headless=True, args=['--no-sandbox'])
         page = browser.new_page(viewport={'width': 1440, 'height': 900})
         page.on('pageerror', lambda error: errors.append(str(error)))
-        page.route('**/apps/app_api/proxy/ai_nextcloud_organizer/**', fake_api)
+        page.route('**/apps/app_api/proxy/ai_organizer/**', fake_api)
         page.set_content('''<html><head><base href="http://127.0.0.1:18080/"></head><body>
           <div id="content" class="app-app_api">
           <main id="ai_organize" class="app-shell"><header class="app-header">

@@ -1,5 +1,6 @@
 <?xml version="1.0"?>
-<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
     <id>ai_organizer</id>
     <name>AI Organizer</name>
 
@@ -13,9 +14,10 @@
         Paperless candidates can be moved to the configured consume folder.
     </description>
 
-    <version>0.1.1</version>
-    <licence>agpl</licence>
+    <version>0.1.2</version>
+    <licence>AGPL-3.0-or-later</licence>
     <author>Local deployment</author>
+    <category>files</category>
 
     <dependencies>
         <nextcloud min-version="33" max-version="34"/>
@@ -25,7 +27,7 @@
         <docker-install>
             <registry>docker.io</registry>
             <image>darthdragon/ai-organizer</image>
-            <image-tag>0.1.1</image-tag>
+            <image-tag>0.1.2</image-tag>
         </docker-install>
 
         <environment-variables>
