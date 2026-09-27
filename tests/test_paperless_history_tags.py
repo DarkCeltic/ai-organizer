@@ -41,7 +41,7 @@ def stub(db, classifier, path='/AI Inbox/example.txt', file_id='700'):
         get_folder_tree=lambda: ['/AI Inbox', '/Documents', '/Documents/Reference'],
         get_tags=lambda: ['reference'], username='admin',
     )
-    classifier._query_ollama = lambda prompt: json.dumps({
+    classifier._query_ollama = lambda prompt, organization_rules="": json.dumps({
         'suggested_filename': 'Example_Reference.txt',
         'suggested_folder': '/Documents/Reference',
         'tags': ['reference', 'documentation'], 'category': 'reference',
@@ -95,7 +95,7 @@ def test_nextcloud_error_does_not_unignore_or_archive(db, classifier):
 
 
 def test_sensitive_credential_skips_llm(classifier):
-    classifier._query_ollama = lambda prompt: (_ for _ in ()).throw(AssertionError('LLM must not run'))
+    classifier._query_ollama = lambda prompt, organization_rules="": (_ for _ in ()).throw(AssertionError('LLM must not run'))
     token = 'CLOUDFLARE_TOKEN=abc123-THIS-SHOULD-NEVER-LEAVE-APP-123456'
     suggestion = classifier.classify('cloudflare_token.txt', '/AI Inbox/cloudflare_token.txt', token)
     assert suggestion['paperless_candidate'] is False
@@ -109,7 +109,7 @@ def test_sensitive_credential_skips_llm(classifier):
 
 
 def test_force_nextcloud_rejects_bad_model_paperless(classifier):
-    classifier._query_ollama = lambda prompt: json.dumps({
+    classifier._query_ollama = lambda prompt, organization_rules="": json.dumps({
         'suggested_filename': 'Useful_Name.txt', 'suggested_folder': '/inbox',
         'tags': ['useful'], 'category': 'notes', 'paperless_candidate': True,
         'confidence': .75, 'reason': 'Model tried Paperless',
@@ -118,12 +118,12 @@ def test_force_nextcloud_rejects_bad_model_paperless(classifier):
                                      force_nextcloud=True)
     assert not suggestion['paperless_candidate']
     assert suggestion['suggested_folder'] != '/inbox'
-    assert suggestion['tags'] == ['useful']
+    assert suggestion['tags'] == ['notes']
 
 
 def test_missing_tags_does_not_trigger_another_full_ollama_request(classifier):
     calls = []
-    def query(prompt):
+    def query(prompt, organization_rules=""):
         calls.append(prompt)
         return json.dumps({
             'suggested_filename': 'Reference.txt' if len(calls) == 1 else 'Wrong_Second_Name.txt',
@@ -154,7 +154,7 @@ def test_extensionless_credential_is_supported_without_llm(db, classifier):
     assert scanner.is_supported_file('/AI Inbox/cloudflare_token')
     assert nextcloud.is_supported_file('/AI Inbox/cloudflare_token')
     assert not scanner.is_supported_file('/AI Inbox/random-no-extension')
-    classifier._query_ollama = lambda prompt: (_ for _ in ()).throw(AssertionError('LLM called'))
+    classifier._query_ollama = lambda prompt, organization_rules="": (_ for _ in ()).throw(AssertionError('LLM called'))
     assert classifier.classify('cloudflare_token', '/AI Inbox/cloudflare_token', '')['confidence'] == 0
 
 
@@ -173,3 +173,81 @@ def test_scheduler_skips_manual_review_suggestions(db, classifier, monkeypatch):
     scheduler.run_once()
     assert not calls
     assert db.get_suggestion(1)['status'] == 'pending'
+
+
+def test_github_recovery_codes_are_detected_before_llm(classifier):
+    classifier._query_ollama = lambda prompt, organization_rules="": (_ for _ in ()).throw(
+        AssertionError('Recovery codes must never be sent to Ollama')
+    )
+    suggestion = classifier.classify(
+        'github-recovery-codes.txt',
+        '/AI Inbox/github-recovery-codes.txt',
+        '12345-67890\nABCDE-FGHIJ',
+    )
+    assert suggestion['paperless_candidate'] is False
+    assert suggestion['confidence'] == 0.0
+    assert suggestion['suggested_filename'] == 'GitHub_Recovery_Codes.txt'
+    assert suggestion['suggested_folder'] == '/Security/Credentials'
+    assert is_sensitive('/AI Inbox/github-recovery-codes.txt')
+
+
+def test_resume_plural_never_send_alias_blocks_paperless(classifier):
+    classifier.paperless_never_send = {'resumes'}
+    classifier.paperless_prefer_send = {'resume'}
+    value = {
+        'suggested_filename': 'Kenneth_Stratton_Resume.odt',
+        'suggested_folder': '/Documents',
+        'tags': ['resume'],
+        'category': 'resume',
+        'paperless_candidate': True,
+        'confidence': .95,
+        'reason': 'Resume content',
+    }
+    result = classifier._apply_paperless_policy(
+        value,
+        'Kenneth Stratton Resume June 2025 skills formated.odt',
+        'Professional experience and skills',
+    )
+    assert result['paperless_candidate'] is False
+
+
+def test_hallucinated_resume_rename_falls_back_to_original(classifier):
+    value = {
+        'suggested_filename': 'Kenneth_Stratton_Tax_Returns_2009-2024_CV.odt',
+        'suggested_folder': '/Documents/Unsorted',
+        'tags': ['resume'],
+        'category': 'resume',
+        'paperless_candidate': True,
+        'confidence': .98,
+        'reason': 'Resume',
+    }
+    repaired = classifier._repair_model_suggestion(
+        value,
+        original_filename='Kenneth Stratton Resume June 2025 skills formated.odt',
+        content='Kenneth Stratton professional resume. Skills, employment history and education.',
+        existing_folders=['/Documents', '/Documents/Resumes'],
+    )
+    assert repaired['suggested_filename'] == 'Kenneth Stratton Resume June 2025 skills formated.odt'
+    assert repaired['suggested_folder'] == '/Documents/Resumes'
+    assert repaired['confidence'] < .95
+    assert 'not supported' in repaired['reason']
+
+
+def test_full_path_accidentally_returned_as_filename_is_split(classifier):
+    value = {
+        'suggested_filename': 'docker-compose/immich/docker-compose.yml',
+        'suggested_folder': '/docker-compose',
+        'tags': ['docker', 'immich'],
+        'category': 'docker_compose',
+        'paperless_candidate': False,
+        'confidence': .97,
+        'reason': 'Immich compose stack',
+    }
+    repaired = classifier._repair_model_suggestion(
+        value,
+        original_filename='docker-compose (4).yml',
+        content='services:\n  immich-server:\n    image: ghcr.io/immich-app/immich-server:release',
+        existing_folders=['/docker-compose'],
+    )
+    assert repaired['suggested_filename'] == 'docker-compose.yml'
+    assert repaired['suggested_folder'] == '/docker-compose/immich'

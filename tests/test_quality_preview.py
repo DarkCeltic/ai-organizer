@@ -14,18 +14,22 @@ def sample(**kwargs):
     return suggestion
 
 
-def test_resume_takeout_is_rejected_and_requires_manual_review():
+def test_foreign_export_is_rejected_without_hardcoded_resume_folder():
     value = improve_suggestion(sample(), file_path='/AI Inbox/My_Resume.pdf',
                                existing_folders=['/Google Takeout/Drive/Jobs', '/Documents/Resumes'],
                                existing_tags=['Resume', 'takeout'])
-    assert value['suggested_folder'] == '/Documents/Resumes'
+    assert value['suggested_folder'] == '/Documents/Unsorted'
     assert value['confidence'] < .95
     assert value['tags'] == ['Resume']
 
 
-def test_resume_folder_proposed_if_none_is_known():
-    value = improve_suggestion(sample(), file_path='/AI Inbox/My_Resume.pdf', existing_folders=[])
-    assert value['suggested_folder'] == '/Documents/Resumes'
+def test_resume_destination_is_not_rewritten_by_hidden_policy():
+    value = improve_suggestion(
+        sample(suggested_folder='/Career/Employment/Resumes'),
+        file_path='/AI Inbox/My_Resume.pdf',
+        existing_folders=['/Career/Employment/Resumes'],
+    )
+    assert value['suggested_folder'] == '/Career/Employment/Resumes'
 
 
 def test_source_inbox_and_foreign_export_rejected():
@@ -44,10 +48,11 @@ def test_existing_tag_exact_match_preferred_over_new_generic_tag():
 
 
 def test_paperless_candidate_has_complete_nextcloud_alternative():
-    note = sample(paperless_candidate=True)
-    result = improve_suggestion(note, file_path='/AI Inbox/My_Resume.pdf')
+    note = sample(paperless_candidate=True, suggested_folder='/Career/Employment/Resumes')
+    result = improve_suggestion(note, file_path='/AI Inbox/My_Resume.pdf',
+                                existing_folders=['/Career/Employment/Resumes'])
     assert result is note and result['tags'] == ['resume']
-    assert result['suggested_folder'] == '/Documents/Resumes'
+    assert result['suggested_folder'] == '/Career/Employment/Resumes'
 
 
 def test_secret_never_targets_ai_inbox_or_auto_apply():

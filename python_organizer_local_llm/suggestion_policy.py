@@ -19,45 +19,38 @@ def is_export(path):
     return any(part in EXPORT for part in components(path))
 
 
-def is_resume(category, filename):
-    text = str(category or '') + ' ' + PurePosixPath(filename).stem
-    return bool(re.search(r'(?:^|[\W_])(?:resume|curriculum vitae|cv)(?:[\W_]|$)', text, re.I))
 
-
-def improve_suggestion(suggestion, *, file_path, existing_folders=(), existing_tags=(), paperless_inbox='/inbox'):
+def improve_suggestion(suggestion, *, file_path, existing_folders=(), existing_tags=(), paperless_inbox='/inbox', allow_new_folder=False):
     # Apply folder/tag quality safeguards to the saved Nextcloud alternative,
     # even when Paperless is the preferred destination.
     proposed = str(suggestion.get('suggested_folder') or '')
     parts = components(proposed)
     category = str(suggestion.get('category') or '').strip().casefold()
-    resume = is_resume(category, PurePosixPath(file_path).name)
     note = ''
     paperless_root = str(paperless_inbox or '/inbox').rstrip('/').casefold()
     unsafe_paperless = (proposed.casefold().rstrip('/') == paperless_root
                         or proposed.casefold().startswith(paperless_root + '/')
                         or 'paperless media' in parts)
-    if resume and (is_export(proposed) or any(part in SOURCE for part in parts)
-                   or not any(part in {'resumes', 'resume', 'cv', 'curriculum vitae'} for part in parts)):
-        matches = [path for path in existing_folders if
-                   not is_export(path) and not any(part in SOURCE for part in components(path))
-                   and any(part in {'resume', 'resumes', 'cv', 'curriculum vitae'} for part in components(path))]
-        suggestion['suggested_folder'] = (sorted(matches, key=lambda x: (len(components(x)), x.casefold()))[0]
-                                          if matches else '/Documents/Resumes')
-        note = 'Resume destination corrected; verify the proposed folder manually.'
-    elif (unsafe_paperless or any(part in SOURCE for part in parts)
-          or (is_export(proposed) and not is_export(file_path))):
+    if (unsafe_paperless or any(part in SOURCE for part in parts)
+            or (is_export(proposed) and not is_export(file_path))):
         suggestion['suggested_folder'] = '/Documents/Unsorted'
         note = 'Unrelated inbox/export destination rejected; choose an appropriate folder manually.'
+    new_folder_note = ''
     if not note and str(suggestion.get('suggested_folder') or '').rstrip('/') not in {
             str(folder).rstrip('/') for folder in existing_folders}:
-        note = 'Destination was not found among existing folders; review before creating it.'
+        if allow_new_folder:
+            new_folder_note = 'Destination is an intentional new folder path and can be created when applied.'
+        else:
+            note = 'Destination was not found among existing folders; review before creating it.'
     if note:
         suggestion['confidence'] = min(float(suggestion.get('confidence') or 0), .69)
         suggestion['reason'] = (str(suggestion.get('reason') or '') + ' ' + note).strip()
+    elif new_folder_note:
+        suggestion['reason'] = (str(suggestion.get('reason') or '') + ' ' + new_folder_note).strip()
     if not suggestion.get('tags'):
         available = {str(t).strip().casefold().replace('_', ' '): str(t).strip()
                      for t in existing_tags if str(t).strip()}
-        candidates = ('resume', 'cv') if resume else (category,)
+        candidates = (category,)
         match = next((available[t] for t in candidates if t in available), None)
         if match:
             suggestion['tags'] = [match]

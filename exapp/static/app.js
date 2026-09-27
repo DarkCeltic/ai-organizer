@@ -276,13 +276,21 @@
                         <label>Nextcloud Paperless consume folder
                             <input id="setting-paperless-inbox" type="text" required list="settings-folder-options"
                                 value="${escapeHtml(settings.paperless_inbox)}" placeholder="/inbox"></label>
-                        <label>Preferred document categories (one per line)
+                        <label>Always keep in Nextcloud (one category per line)
+                            <textarea id="setting-paperless-never-send" rows="7"
+                                placeholder="resume&#10;source_code&#10;project"
+                                >${escapeHtml((settings.paperless_never_send || []).join('\n'))}</textarea></label>
+                        <p class="hint">These categories are never recommended for Paperless. They are administrator policy,
+                            match the AI's document category rather than filename keywords, and take precedence over preferred categories.
+                            If this list is cleared, the values from config.yaml are restored automatically.</p>
+                        <label>Prefer Paperless (one category per line)
                             <textarea id="setting-paperless-prefer-send" rows="7"
                                 placeholder="receipt&#10;invoice&#10;statement&#10;tax"
                                 >${escapeHtml((settings.paperless_prefer_send || []).join('\n'))}</textarea></label>
-                        <p class="hint">Matches the document category, not a filename keyword. For example: receipt, invoice, statement, tax.
-                            Configured Never-send restrictions (including resumes) take precedence. A preference only recommends Paperless;
-                            you still choose the destination manually. Automatic Apply never sends files to Paperless.</p>
+                        <p class="hint">These categories recommend Paperless when the document is classified into that category.
+                            Categories not listed in either policy use the AI's archival-record versus working-file heuristic.
+                            If this list is cleared, the values from config.yaml are restored automatically.
+                            You still choose the destination manually, and Automatic Apply never sends files to Paperless.</p>
                         <p class="hint">When disabled, the AI only recommends Nextcloud. Enabling integration does not make Paperless routing automatic.</p>
                     </section>
                     <section class="settings-section hidden" data-section="scheduling">
@@ -329,9 +337,10 @@
                     </section>
                     <section class="settings-section hidden" data-section="rules">
                         <h3>Local AI instructions</h3>
-                        <p>Advisory preferences only. Application safety and Paperless exclusions take precedence.</p>
+                        <p>Administrator organization rules take priority over generic AI organization defaults when they apply.
+                            Application security constraints and the dedicated Paperless policy remain separate.</p>
                         <label>Global instructions <textarea id="setting-global-rules" rows="7"
-                            maxlength="8000" placeholder="Prefer existing folders; retain resumes in Nextcloud…"
+                            maxlength="8000" placeholder="For Docker Compose files, use /docker-compose/&lt;application&gt;/docker-compose.yml…"
                             >${escapeHtml(settings.global_instructions)}</textarea></label>
                         <h3>Folder-specific rules</h3>
                         <div id="settings-rules"></div>
@@ -379,6 +388,7 @@
                 minimum_auto_confidence: 0.95,
                 paperless_enabled: settingsValue('setting-paperless-enabled').checked,
                 paperless_inbox: settingsValue('setting-paperless-inbox').value.trim(),
+                paperless_never_send: lines('setting-paperless-never-send'),
                 paperless_prefer_send: lines('setting-paperless-prefer-send'),
                 global_instructions: settingsValue('setting-global-rules').value,
                 folder_rules: Array.from(settingsPanel.querySelectorAll('.settings-rule')).map((row) => ({

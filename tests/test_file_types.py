@@ -192,11 +192,13 @@ def test_old_sqlite_settings_migrate_without_erasing_other_preferences(tmp_path)
     older = service.get()
     older['temperature'] = 0.35
     older['paperless_prefer_send'] = ['receipt']
+    del older['paperless_never_send']
     del older['file_types']
     organizer.database.save_settings(older)  # Previous release's settings format.
     upgraded = SettingsService(organizer).get()
     assert upgraded['temperature'] == 0.35
     assert upgraded['paperless_prefer_send'] == ['receipt']
+    assert upgraded['paperless_never_send'] == []
     assert upgraded['file_types'] == ['pdf', 'xlsx', 'md', 'credential']
     assert 'file_types' not in organizer.database.load_settings()  # Migration is non-destructive.
     organizer.database.save_settings(upgraded)

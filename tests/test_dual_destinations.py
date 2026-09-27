@@ -56,7 +56,7 @@ def test_one_model_call_keeps_both_alternatives_and_reason(tmp_path):
     config = tmp_path/'config.yaml'; config.write_text('paperless:\n  enabled: true\n  inbox_path: /consume\n')
     classifier = Classifier(str(config))
     requests = []
-    def fake(prompt):
+    def fake(prompt, organization_rules=""):
         requests.append(prompt)
         return json.dumps(dict(suggested_filename='Grocery_Receipt.pdf',
             suggested_folder='/Documents/Receipts', tags=['groceries'], category='receipt',
@@ -149,7 +149,7 @@ def test_legacy_exclusion_does_not_force_future_classifier_decision(system):
     organizer.nextcloud.get_file_text=lambda path: 'Receipt for groceries, $5'
     organizer.nextcloud.get_folder_tree=lambda: ['/Documents/Receipts']
     organizer.nextcloud.get_tags=lambda: ['groceries']
-    organizer.classifier._query_ollama=lambda prompt: json.dumps(dict(
+    organizer.classifier._query_ollama=lambda prompt, organization_rules="": json.dumps(dict(
         suggested_filename='Grocery_Receipt.pdf', suggested_folder='/Documents/Receipts',
         tags=['groceries'], category='receipt', paperless_candidate=True, confidence=.90,
         reason='Receipt is suitable for Paperless.'))

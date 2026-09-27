@@ -16,12 +16,14 @@ class Database:
 
     def __init__(self, config_file: str = "config.yaml"):
         self.log = logging.getLogger("database")
-        self.config = self._load_config(config_file)
+        self.config_file = Path(config_file).expanduser().resolve()
+        self.config = self._load_config(str(self.config_file))
 
         db_config = self.config.get("database", {})
-        self.path = Path(
-            db_config.get("path", "/app/data/ai_organizer.db")
-        )
+        raw_path = Path(str(db_config.get("path", "data/ai_organizer.db"))).expanduser()
+        if not raw_path.is_absolute():
+            raw_path = self.config_file.parent / raw_path
+        self.path = raw_path.resolve()
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
+import logging
 import math
 import os
+from pathlib import Path
 import re
 import threading
 from urllib.parse import urlsplit
@@ -127,13 +129,96 @@ def load_environment_settings(*, load_env_file: bool = True) -> EnvironmentSetti
 
 
 class SettingsService:
+    PAPERLESS_POLICY_KEYS = (
+        'paperless_never_send',
+        'paperless_prefer_send',
+    )
+
     def __init__(self, organizer):
         self.organizer = organizer
         self.lock = threading.RLock()
+        self.log = logging.getLogger("settings")
+
         stored = organizer.database.load_settings()
+        first_seed = not bool(stored)
         self.defaults = self._defaults(stored)
-        self.values = self.validate({**self.defaults, **stored})
+        self.values = self.validate(self._merge_with_defaults(stored))
+
+        # Persist effective settings on first initialization.  Previously the
+        # service only wrote a row when it detected a non-empty Paperless-policy
+        # migration.  A brand-new/empty organizer_settings table could therefore
+        # remain empty even though the UI was using in-memory defaults.
+        #
+        # For existing databases, blank Paperless lists are still treated as
+        # "use config.yaml defaults" and the effective values are written back.
+        migrated = [
+            key for key in self.PAPERLESS_POLICY_KEYS
+            if not (stored or {}).get(key) and self.values.get(key)
+        ]
+
+        if first_seed or migrated:
+            organizer.database.save_settings(self.values)
+            persisted = organizer.database.load_settings()
+            if persisted != self.values:
+                raise RuntimeError(
+                    "Organizer settings were written to SQLite but could not be "
+                    "read back unchanged. Check the configured database path and "
+                    "filesystem permissions."
+                )
+
+            if first_seed:
+                self.log.info(
+                    "Seeded organizer_settings from effective config/runtime defaults."
+                )
+            if migrated:
+                self.log.info(
+                    "Persisted Paperless policy defaults from config.yaml: %s",
+                    ", ".join(migrated),
+                )
+
+        config_path = Path(getattr(organizer, "config_file", "config.yaml")).expanduser().resolve()
+        database_path = Path(organizer.database.path).expanduser().resolve()
+        config_paperless = organizer.classifier.config.get("paperless", {}) or {}
+        self.log.info(
+            "Settings initialized: config=%s database=%s saved_row=%s "
+            "paperless_never_send=%s paperless_prefer_send=%s",
+            config_path,
+            database_path,
+            bool(organizer.database.load_settings()),
+            self.values.get("paperless_never_send", []),
+            self.values.get("paperless_prefer_send", []),
+        )
+        self.log.info(
+            "Paperless policy loaded from config.yaml: never_send=%s prefer_send=%s",
+            config_paperless.get("never_send") or [],
+            config_paperless.get("prefer_send") or [],
+        )
+
         self._apply(self.values)
+
+    def _merge_with_defaults(self, stored):
+        """Merge persisted settings over config defaults.
+
+        Paperless policy lists are slightly different from ordinary settings:
+        an absent or empty persisted list means "use the values from config.yaml".
+        This prevents an old/blank SQLite value from silently disabling the
+        administrator policy shipped in config.yaml. A non-empty persisted list
+        remains an explicit UI override.
+        """
+        merged = {**self.defaults, **(stored or {})}
+        for key in self.PAPERLESS_POLICY_KEYS:
+            saved = (stored or {}).get(key)
+            if not saved:
+                merged[key] = copy.deepcopy(self.defaults[key])
+        return merged
+
+    def _restore_blank_policy_defaults(self, values):
+        """Treat a blank Paperless policy textarea as "restore config defaults"."""
+        restored = copy.deepcopy(values)
+        for key in self.PAPERLESS_POLICY_KEYS:
+            if not restored.get(key):
+                restored[key] = copy.deepcopy(self.defaults[key])
+        return restored
 
     def _defaults(self, stored=None):
         stored = stored or {}
@@ -162,7 +247,11 @@ class SettingsService:
         classifier = config.get('classifier', {})
         ocr = config.get('ocr', {})
         scanner = self.organizer.scanner
-        prefer_send = config.get('paperless', {}).get('prefer_send') or []
+        paperless_config = config.get('paperless', {})
+        never_send = paperless_config.get('never_send') or []
+        if isinstance(never_send, str):
+            never_send = [never_send]
+        prefer_send = paperless_config.get('prefer_send') or []
         if isinstance(prefer_send, str):
             prefer_send = [prefer_send]
         return {
@@ -191,6 +280,7 @@ class SettingsService:
                 or runtime.paperless_inbox
                 or config.get('paperless', {}).get('inbox_path', '/inbox')
             ),
+            'paperless_never_send': list(never_send),
             'paperless_prefer_send': list(prefer_send),
         }
 
@@ -224,7 +314,7 @@ class SettingsService:
             'exclude_paths', 'schedule_enabled', 'interval_minutes', 'auto_analyze',
             'auto_apply', 'auto_apply_warning_accepted', 'minimum_auto_confidence',
             'global_instructions', 'folder_rules', 'paperless_enabled', 'paperless_inbox',
-            'paperless_prefer_send', 'ocr_enabled', 'ocr_max_pages', 'file_types'
+            'paperless_never_send', 'paperless_prefer_send', 'ocr_enabled', 'ocr_max_pages', 'file_types'
         }
         if not isinstance(incoming, dict) or set(incoming) != allowed:
             raise ValueError('Settings payload is missing keys or contains unknown settings')
@@ -257,22 +347,29 @@ class SettingsService:
         v['minimum_auto_confidence'] = 0.95
         if v['auto_apply'] and not v['auto_apply_warning_accepted']:
             raise ValueError('You must acknowledge the file-movement warning before enabling Automatic Apply')
-        # Advisory category preferences only: explicit never_send and credential
-        # safeguards remain authoritative. Normalize when saved, so restarts are stable.
-        raw_preferences = v['paperless_prefer_send']
-        if not isinstance(raw_preferences, list) or len(raw_preferences) > 100:
-            raise ValueError('Paperless preferred categories must be a list of at most 100 entries')
-        normalized = []
-        for category in raw_preferences:
-            if not isinstance(category, str) or len(category) > 100:
-                raise ValueError('Paperless preferred categories must be short text entries')
-            entry = category.strip()
-            if not re.fullmatch(r'[A-Za-z0-9]+(?:[ _-][A-Za-z0-9]+)*', entry):
-                raise ValueError('Paperless preferred categories may contain letters, numbers, spaces, _ and -')
-            policy_name = entry.lower().replace('-', '_').replace(' ', '_')
-            if policy_name not in normalized:
-                normalized.append(policy_name)
-        v['paperless_prefer_send'] = normalized
+        # Paperless category policy is administrator-controlled. Normalize both
+        # lists when saved so matching is stable across restarts and model wording.
+        def normalize_policy_list(raw, label):
+            if not isinstance(raw, list) or len(raw) > 100:
+                raise ValueError(f'{label} must be a list of at most 100 entries')
+            normalized = []
+            for category in raw:
+                if not isinstance(category, str) or len(category) > 100:
+                    raise ValueError(f'{label} must contain short text entries')
+                entry = category.strip()
+                if not re.fullmatch(r'[A-Za-z0-9]+(?:[ _-][A-Za-z0-9]+)*', entry):
+                    raise ValueError(f'{label} may contain letters, numbers, spaces, _ and -')
+                policy_name = entry.lower().replace('-', '_').replace(' ', '_')
+                if policy_name and policy_name not in normalized:
+                    normalized.append(policy_name)
+            return normalized
+
+        v['paperless_never_send'] = normalize_policy_list(
+            v['paperless_never_send'], 'Paperless Always-Keep categories'
+        )
+        v['paperless_prefer_send'] = normalize_policy_list(
+            v['paperless_prefer_send'], 'Paperless preferred categories'
+        )
         if not isinstance(v['paperless_enabled'], bool):
             raise ValueError('paperless_enabled must be true or false')
         if not v['paperless_enabled'] and not str(v['paperless_inbox'] or '').strip():
@@ -316,7 +413,10 @@ class SettingsService:
 
     def save(self, values):
         with self.lock:
-            validated = self.validate(values)
+            # Empty Paperless policy lists mean "restore config.yaml defaults",
+            # not "disable all policy". The effective defaults are persisted so
+            # the Settings UI immediately reflects what the classifier is using.
+            validated = self.validate(self._restore_blank_policy_defaults(values))
             self.organizer.database.save_settings(validated)
             self.values = validated
             self._apply(validated)
@@ -331,7 +431,17 @@ class SettingsService:
         classifier.max_content_chars = v['max_content_chars']
         classifier.paperless_enabled = v['paperless_enabled']
         classifier.paperless_inbox = v['paperless_inbox']
-        classifier.paperless_prefer_send = set(v['paperless_prefer_send'])
+        canonicalize_policy = getattr(classifier, '_canonical_policy_value', None)
+        if not callable(canonicalize_policy):
+            canonicalize_policy = lambda value: str(value).strip().lower().replace('-', '_').replace(' ', '_')
+        classifier.paperless_never_send = {
+            canonicalize_policy(value)
+            for value in v['paperless_never_send']
+        }
+        classifier.paperless_prefer_send = {
+            canonicalize_policy(value)
+            for value in v['paperless_prefer_send']
+        }
         self.organizer.paperless_enabled = v['paperless_enabled']
         self.organizer.paperless_inbox = v['paperless_inbox']
         classifier.global_instructions = v['global_instructions']

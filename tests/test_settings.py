@@ -134,7 +134,7 @@ def test_compose_and_config_contain_no_embedded_secret():
     assert not {'url', 'username', 'app_password', 'password'} & set(config['nextcloud'])
     assert 'url' not in config['ollama'] and 'model' not in config['ollama']
     assert 'enabled' not in config['paperless']
-    assert config['database']['path'].startswith('/app/data/')
+    assert config['database']['path'] == 'data/ai_organizer.db'
 
 
 def test_environment_settings_have_no_ollama_model_default(monkeypatch):
@@ -214,3 +214,173 @@ def test_organizer_prefers_appapi_persistent_storage(tmp_path, monkeypatch):
     runtime = EnvironmentSettings(persistent_storage=str(persistent))
     organizer = Organizer(str(config), runtime_settings=runtime)
     assert organizer.database.path == persistent / 'ai_organizer.db'
+
+
+def test_first_initialization_seeds_full_settings_row(tmp_path):
+    config = tmp_path / 'config.yaml'
+    db_path = tmp_path / 'seed.db'
+    config.write_text(
+        'ollama:\n'
+        '  url: "http://localhost:11434"\n'
+        '  model: "qwen2.5:7b"\n'
+        'paperless:\n'
+        '  never_send:\n'
+        '    - resume\n'
+        '    - source_code\n'
+        '  prefer_send:\n'
+        '    - invoice\n'
+        '    - receipt\n'
+        'database:\n'
+        f'  path: "{db_path}"\n',
+        encoding='utf-8',
+    )
+    db = Database(str(config))
+    db.initialize()
+    assert db.load_settings() == {}
+
+    classifier = SimpleNamespace(
+        config={
+            'ollama': {'url': 'http://localhost:11434', 'model': 'qwen2.5:7b'},
+            'classifier': {'max_content_chars': 8000},
+            'paperless': {
+                'never_send': ['resume', 'source_code'],
+                'prefer_send': ['invoice', 'receipt'],
+            },
+        },
+        base_url='', model='', timeout=0, temperature=0.0,
+        max_content_chars=0, paperless_enabled=False,
+    )
+    scanner = SimpleNamespace(
+        scan_paths=['/AI Inbox'], exclude_paths=[], allowed_extensions=set(),
+    )
+    nextcloud = SimpleNamespace(scan_paths=[], exclude_paths=[])
+    organizer = SimpleNamespace(
+        database=db, classifier=classifier, scanner=scanner, nextcloud=nextcloud,
+        runtime_settings=SimpleNamespace(
+            config_file=str(config), ollama_url='', ollama_model='',
+            paperless_enabled=False, paperless_enabled_from_env=False,
+            paperless_inbox='',
+        ),
+    )
+
+    service = SettingsService(organizer)
+    saved = db.load_settings()
+    assert saved
+    assert saved == service.get()
+    assert saved['paperless_never_send'] == ['resume', 'source_code']
+    assert saved['paperless_prefer_send'] == ['invoice', 'receipt']
+
+    with db._connect() as conn:
+        count = conn.execute('SELECT COUNT(*) FROM organizer_settings').fetchone()[0]
+    assert count == 1
+
+
+def test_blank_saved_paperless_lists_are_persisted_from_config(tmp_path):
+    config = tmp_path / 'config.yaml'
+    db_path = tmp_path / 'migrate.db'
+    config.write_text(
+        'database:\n'
+        f'  path: "{db_path}"\n',
+        encoding='utf-8',
+    )
+    db = Database(str(config))
+    db.initialize()
+
+    classifier = SimpleNamespace(
+        config={
+            'ollama': {'url': 'http://localhost:11434', 'model': 'qwen2.5:7b'},
+            'classifier': {'max_content_chars': 8000},
+            'paperless': {
+                'never_send': ['resume'],
+                'prefer_send': ['invoice'],
+            },
+        },
+        base_url='', model='', timeout=0, temperature=0.0,
+        max_content_chars=0, paperless_enabled=False,
+    )
+    scanner = SimpleNamespace(
+        scan_paths=['/AI Inbox'], exclude_paths=[], allowed_extensions=set(),
+    )
+    nextcloud = SimpleNamespace(scan_paths=[], exclude_paths=[])
+    organizer = SimpleNamespace(
+        database=db, classifier=classifier, scanner=scanner, nextcloud=nextcloud,
+        runtime_settings=SimpleNamespace(
+            config_file=str(config), ollama_url='', ollama_model='',
+            paperless_enabled=False, paperless_enabled_from_env=False,
+            paperless_inbox='',
+        ),
+    )
+
+    # Seed once, then deliberately persist blank lists to emulate an older build.
+    service = SettingsService(organizer)
+    old = service.get()
+    old['paperless_never_send'] = []
+    old['paperless_prefer_send'] = []
+    db.save_settings(old)
+
+    migrated = SettingsService(organizer)
+    saved = db.load_settings()
+    assert migrated.get()['paperless_never_send'] == ['resume']
+    assert migrated.get()['paperless_prefer_send'] == ['invoice']
+    assert saved['paperless_never_send'] == ['resume']
+    assert saved['paperless_prefer_send'] == ['invoice']
+
+
+def test_database_relative_path_is_anchored_to_config_directory(tmp_path):
+    config_dir = tmp_path / 'nested' / 'project'
+    config_dir.mkdir(parents=True)
+    config = config_dir / 'config.yaml'
+    config.write_text('database:\n  path: "data/settings.db"\n', encoding='utf-8')
+
+    db = Database(str(config))
+
+    assert db.config_file == config.resolve()
+    assert db.path == (config_dir / 'data' / 'settings.db').resolve()
+
+
+def test_organizer_resolves_one_config_path_for_all_components(tmp_path, monkeypatch):
+    from python_organizer_local_llm.organizer import Organizer
+    from python_organizer_local_llm.settings import EnvironmentSettings
+    import python_organizer_local_llm.organizer as organizer_module
+
+    config = tmp_path / 'config.yaml'
+    config.write_text(
+        'database:\n  path: "data/settings.db"\n'
+        'paperless:\n  never_send: [resume]\n  prefer_send: [invoice]\n',
+        encoding='utf-8',
+    )
+    received = {}
+
+    class DummyNextcloud:
+        def __init__(self, config_file, **kwargs):
+            received['nextcloud'] = config_file
+            self.scan_paths = ['/AI Inbox']
+            self.exclude_paths = []
+
+    class DummyClassifier:
+        def __init__(self, config_file, **kwargs):
+            received['classifier'] = config_file
+            self.config = {
+                'paperless': {'never_send': ['resume'], 'prefer_send': ['invoice']}
+            }
+            self.paperless_enabled = False
+
+    class DummyScanner:
+        def __init__(self, *, config_file, **kwargs):
+            received['scanner'] = config_file
+            self.scan_paths = ['/AI Inbox']
+            self.exclude_paths = []
+
+    monkeypatch.setattr(organizer_module, 'NextcloudClient', DummyNextcloud)
+    monkeypatch.setattr(organizer_module, 'Classifier', DummyClassifier)
+    monkeypatch.setattr(organizer_module, 'Scanner', DummyScanner)
+
+    organizer = Organizer(str(config), runtime_settings=EnvironmentSettings())
+    expected = str(config.resolve())
+    assert organizer.config_file == expected
+    assert received == {
+        'nextcloud': expected,
+        'classifier': expected,
+        'scanner': expected,
+    }
+    assert organizer.database.path == (tmp_path / 'data' / 'settings.db').resolve()

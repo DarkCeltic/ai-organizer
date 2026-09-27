@@ -8,10 +8,10 @@ AI Organizer is a self-hosted [Nextcloud](https://nextcloud.com/) external app (
 
 ## Highlights
 
-- **Local AI analysis:** Connect to an Ollama server you control. The app uses the file's content, existing Nextcloud folders, and available tags to propose an organization plan with a confidence score and explanation.
+- **Two-stage local AI analysis:** Connect to an Ollama server you control. The identity stage sees the file name/content but no existing folder or tag names, preventing destination metadata from contaminating category/filename decisions. A separate destination-only stage may choose a matching existing folder or propose a new folder path; it cannot change the frozen file identity.
 - **Human approval:** Preview suggestions before changes are made. Edit a filename or folder, choose suggested tags with checkboxes, and apply individual actions or all applicable actions.
 - **Paperless-ngx routing:** Recommend eligible documents for a configurable Paperless consume/inbox folder. For a Paperless recommendation, choose to send it to Paperless or keep it in Nextcloud; Nextcloud-only recommendations use **Apply all**.
-- **Routing policy:** Configure document categories that must stay in Nextcloud (`never_send`) and categories preferred for Paperless (`prefer_send`). `never_send` takes precedence. For example, resumes and project files can be kept in Nextcloud even if the model recommends otherwise.
+- **Routing policy:** Configure **Always keep in Nextcloud** and **Prefer Paperless** categories in Settings. Always-Keep takes precedence, and these lists are administrator policy rather than hidden hardcoded document-type rules.
 - **Four separate workspace views:** Unprocessed, Review, History, and Failed, with a selected-file detail pane below the active list. Only one queue appears at a time.
 - **Preserved history:** Keep previous applied, rejected, ignored, and unavailable-file records, including recorded paths, suggested changes, and decision details. Reanalyzing a previously rejected file creates a new suggestion for Review while retaining its earlier decision in History.
 - **Missing-file handling:** If a file is no longer found in Nextcloud, remove its actionable suggestion from Review but preserve its last-known details and an unavailability note in History. Temporary Nextcloud/API failures are not treated as proof of deletion.
@@ -30,7 +30,10 @@ Discover supported files in configured scan folders
 Extract text (PDF / Office / text / spreadsheet; OCR fallback for PDFs)
       |
       v
-Ollama suggests a filename, folder, tags, and Paperless eligibility
+Ollama identifies the file, filename/tags, category, and Paperless eligibility
+      |
+      v
+Resolve destination separately: use an existing folder or propose a new path
       |
       v
 Review in the AI Organizer workspace
@@ -45,6 +48,17 @@ Review in the AI Organizer workspace
 ```
 
 Analysis produces **suggestions**, not automatic file moves. Applying a recommendation is a separate user action. A Paperless recommendation moves the file to a configured consume folder; Paperless-ngx handles ingestion from there. The ExApp does not replace Paperless's document-management functionality.
+
+### Destination resolution
+
+Existing Nextcloud folders are **candidates, not a hard limit**. AI Organizer first freezes file identity without showing the classifier any existing folder or tag names. It then resolves the destination separately:
+
+1. An explicit administrator folder template wins and may create a path that does not exist yet, such as `/docker-compose/immich`.
+2. A single deterministic category-matching existing folder is reused when available.
+3. Otherwise a destination-only Ollama request may choose an existing folder or propose a new absolute path. That request cannot change the category, filename, tags, or Paperless decision.
+4. If file identity is too uncertain, the file goes to `/Documents/Unsorted` rather than inventing a destination.
+
+Intentional new-folder suggestions are not treated as errors merely because the folder is absent; the normal Apply path can create the destination. Semantic-only existing-folder matches are capped below the default 95% auto-apply threshold so they remain reviewable.
 
 ## Workspace
 
@@ -163,11 +177,11 @@ All direct environment access is centralized in `python_organizer_local_llm/sett
 
 ## Paperless behavior
 
-Paperless integration is **optional**. When enabled, the organizer suggests routing document-like files to your configured consume directory. The routing policy is designed to keep working files such as resumes and source code in Nextcloud and prioritize document categories you designate for Paperless.
+Paperless integration is **optional**. When enabled, the organizer suggests routing archival document records to your configured consume directory while keeping a complete Nextcloud alternative. Categories not covered by administrator policy use an archival-record versus working-file heuristic.
 
 For a **Paperless recommendation**, the review UI offers a Paperless action and a **Keep in Nextcloud** alternative, alongside applicable apply controls. For a **Nextcloud-only recommendation**, the main combined action is simply **Apply all**; there is no redundant Keep in Nextcloud button. In either case, review the proposed destination before applying it.
 
-The `never_send` list takes priority over `prefer_send`. Configure and adjust preferred categories in **Settings → Paperless**. The selected policy is not a guarantee that AI classification will always be correct; manual review remains important.
+The **Always keep in Nextcloud** list takes priority over **Prefer Paperless**. Both lists are editable in **Settings → Paperless** and persisted in SQLite. The YAML values are only initial defaults for a new install. The selected policy is not a guarantee that AI classification will always be correct; manual review remains important.
 
 ## PDF OCR and file types
 
@@ -200,7 +214,7 @@ This project is designed for self-hosted Nextcloud and a local/self-hosted Ollam
 | Scanned PDF reports no readable text | Enable OCR and verify the OCR-capable image was rebuilt with its dependencies; inspect Failed if extraction still fails. |
 | Review fails to verify files | Check Nextcloud/WebDAV connectivity and permissions. Do not archive files merely because the lookup errored. |
 | Suggestion seems outdated after a file changed | Re-analyze to create a current suggestion rather than applying one based on the previous file version. |
-| A Paperless candidate should stay in Nextcloud | Select **Keep in Nextcloud** and review your `never_send`/`prefer_send` policies. |
+| A Paperless candidate should stay in Nextcloud | Select **Keep in Nextcloud** and review **Always keep in Nextcloud** / **Prefer Paperless** in Settings. |
 
 ## Development and contributions
 
@@ -213,3 +227,24 @@ Issues and pull requests are welcome. When reporting a problem, include a descri
 **GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`).** See the repository's `LICENSE.md` file for the full license text. Add the full license file to the repository before publication if it is not already present. Third-party dependencies and any reused third-party code retain their respective licenses.
 
 This is an independent project and is not an official Nextcloud, Ollama, or Paperless-ngx product.
+
+
+### Paperless policy defaults
+
+When `paperless_never_send` or `paperless_prefer_send` is missing, null, or empty in persisted settings, AI Organizer imports the corresponding `config.yaml` values into SQLite during startup. The Settings UI therefore displays the same effective policy the classifier uses. Non-empty saved UI values remain explicit overrides.
+
+## Configuration paths
+
+`AI_ORGANIZER_CONFIG` may point to any config file. At startup the application resolves that file to an absolute path and passes the exact same path to the database, classifier, scanner, and Nextcloud client. Database paths in `config.yaml` are resolved relative to that config file.
+
+For a setup that works in both PyCharm and Docker, use:
+
+```yaml
+database:
+  path: "data/ai_organizer.db"
+```
+
+With a project config at `C:/.../ai-organizer/config.yaml`, PyCharm uses `<project>/data/ai_organizer.db`. In the Docker image, `/app/config.yaml` uses `/app/data/ai_organizer.db`. Avoid root-relative Windows paths such as `\data\...` unless you intentionally want a database at the drive root.
+
+Startup logs print the resolved config path, resolved database path, and the Paperless policy lists actually loaded from that config.
+

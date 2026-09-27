@@ -43,16 +43,24 @@ ollama:
   # not defined here. They must be supplied for a new installation.
   timeout: 180
   temperature: 0
+  # Hard ceiling for one classification response; prevents runaway generations.
+  num_predict: 512
 
 classifier:
   max_content_chars: 8000
+  # Existing folder names are withheld from identity classification.
+  # max_folder_entries limits the separate destination-only comparison step.
+  # Existing tag names are not sent as identity evidence; exact equivalent tags
+  # may be reused after classification.
   max_folder_entries: 500
   max_tag_entries: 200
   minimum_confidence: 0.70
 
 paperless:
-  # These document categories must remain in Nextcloud even if the local LLM
-  # mistakenly marks them as Paperless candidates.
+  # Administrator policy defaults. Settings > Paperless shows these values
+  # automatically when no non-empty UI override is saved. Clearing either policy
+  # list in the UI restores these config.yaml defaults instead of disabling them.
+  # Categories in never_send always remain in Nextcloud.
   never_send:
     - resume
     - cv
@@ -63,7 +71,7 @@ paperless:
     - project
     - template
 
-  # Advisory category preferences. never_send always takes precedence.
+  # Categories that should prefer Paperless. never_send always takes precedence.
   prefer_send:
     - receipt
     - invoice
@@ -74,5 +82,6 @@ paperless:
     - warranty
 
 database:
-  # Manual Docker/Compose path. Keep /app/data on a persistent volume.
-  path: "/app/data/ai_organizer.db"
+  # Path is resolved relative to config.yaml. In Docker /app/config.yaml -> /app/data;
+  # in PyCharm <project>/config.yaml -> <project>/data. Keep that directory persistent.
+  path: "data/ai_organizer.db"

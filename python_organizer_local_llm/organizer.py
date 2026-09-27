@@ -69,16 +69,18 @@ class Organizer:
         if self.limit is not None and self.limit < 1:
             raise ValueError("--limit must be greater than zero.")
 
-        config_path = Path(config_file)
+        config_path = Path(config_file).expanduser().resolve()
         if not config_path.is_file():
             raise FileNotFoundError(
-                f"Configuration file does not exist: {config_file}"
+                f"Configuration file does not exist: {config_path}"
             )
 
-        # These constructors must match the companion modules.
-        # If your existing modules use different constructor signatures,
-        # upload them with this file and they can be matched exactly.
-        self.database = Database(config_file)
+        # Resolve the config path once and pass the exact same file to every
+        # component. This prevents PyCharm/container working-directory changes
+        # from making Database, Classifier, Scanner, and Nextcloud load different
+        # config.yaml files.
+        self.config_file = str(config_path)
+        self.database = Database(self.config_file)
         # AppAPI mounts a per-ExApp persistent volume and supplies its path in
         # APP_PERSISTENT_STORAGE. Prefer it for SQLite so Review/History/Settings
         # survive container replacement and upgrades. Manual/Compose deployments
@@ -89,10 +91,10 @@ class Organizer:
             )
 
         self.nextcloud = NextcloudClient(
-            config_file, runtime_settings=self.runtime_settings
+            self.config_file, runtime_settings=self.runtime_settings
         )
         self.classifier = Classifier(
-            config_file, runtime_settings=self.runtime_settings
+            self.config_file, runtime_settings=self.runtime_settings
         )
 
         paperless_config = self.classifier.config.get("paperless", {})
@@ -108,7 +110,7 @@ class Organizer:
         self.scanner = Scanner(
             nextcloud=self.nextcloud,
             database=self.database,
-            config_file=config_file,
+            config_file=self.config_file,
         )
 
     def run(self) -> int:
