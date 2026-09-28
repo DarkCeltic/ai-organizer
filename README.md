@@ -4,7 +4,7 @@
 
 AI Organizer is a self-hosted [Nextcloud](https://nextcloud.com/) external app (ExApp) that uses [Ollama](https://ollama.com/) to read supported files and propose meaningful filenames, destination folders, tags, and optional routing to [Paperless-ngx](https://docs.paperless-ngx.com/). Review and edit each recommendation before applying it. A SQLite-backed history preserves previous decisions and file details so that reanalysis does not erase the past.
 
-> **Project status:** Early development (app metadata: `0.2.1`). This project has been developed and tested in a personal self-hosted environment; it is not presented as a turnkey or production-hardened release. Review recommendations and back up your Nextcloud data and organizer database before using it on important files.
+> **Project status:** Early development (app metadata: `0.2.2`). This project has been developed and tested in a personal self-hosted environment; it is not presented as a turnkey or production-hardened release. Review recommendations and back up your Nextcloud data and organizer database before using it on important files.
 
 ## Highlights
 
@@ -84,7 +84,7 @@ Ollama can run on another host on your LAN. Use an address reachable **from the 
 
 ## Installation and configuration
 
-AI Organizer is designed to be installed as a Nextcloud **ExApp** through AppAPI. The ExApp ID is `ai_organizer`, and the `0.2.1` manifest points AppAPI to `darthdragon/ai-organizer:0.2.1`.
+AI Organizer is designed to be installed as a Nextcloud **ExApp** through AppAPI. The ExApp ID is `ai_organizer`, and the `0.2.2` manifest points AppAPI to `darthdragon/ai-organizer:0.2.2`.
 
 ### Recommended: Nextcloud AppAPI / App Store
 
@@ -99,13 +99,15 @@ Paperless        optional
 Paperless inbox  /inbox by default
 ```
 
+The first-run screen can test the Ollama URL before saving and discover locally installed models directly in the existing editable **Model** field. The field remains free-form, so an administrator can pick a discovered model or type a new registry model name and ask Ollama to pull it. Pull status is shown in the UI: start/completion messages are green and Ollama failures (including invalid model names/tags) are shown in red. The full **Settings → Local LLM** page provides the same controls. The Ollama URL may be saved before a model is selected; analysis remains disabled until both values are configured.
+
 The first-run screen saves these values to the organizer's SQLite settings. Advanced settings remain available under **AI Organizer → Settings**.
 
 The manifest also declares `OLLAMA_URL`, `OLLAMA_MODEL`, `PAPERLESS_ENABLED`, and `INBOX_PATH` as optional AppAPI deploy options. They can pre-seed an installation, but they are not required for the container to boot.
 
 AI Organizer stores its SQLite database under `APP_PERSISTENT_STORAGE` when AppAPI supplies that path. Review, History, Failed records, saved settings, and the service-user context therefore survive container replacement and upgrades.
 
-> **Current access model:** `0.2.1` is administrator-only. The organizer currently has one global SQLite database and one scheduler, so the manifest intentionally restricts the UI/API and file action to administrators until per-user state separation is implemented.
+> **Current access model:** `0.2.2` is administrator-only. The organizer currently has one global SQLite database and one scheduler, so the manifest intentionally restricts the UI/API and file action to administrators until per-user state separation is implemented.
 
 ### Advanced: manual AppAPI / Docker Compose
 
@@ -188,7 +190,7 @@ All direct environment access is centralized in `python_organizer_local_llm/sett
 | `PAPERLESS_ENABLED` | Optional initial Paperless state. | Defaults to `false`. |
 | `INBOX_PATH` | Initial Paperless consume folder. | Defaults to `/inbox`. |
 | `APP_ID` | ExApp identifier. | Supplied by AppAPI; default `ai_organizer`. |
-| `APP_VERSION` | ExApp version. | Supplied by AppAPI; default `0.2.1`. |
+| `APP_VERSION` | ExApp version. | Supplied by AppAPI; default `0.2.2`. |
 | `APP_PERSISTENT_STORAGE` | Persistent ExApp data path. | Supplied by AppAPI. |
 | `AA_VERSION` | AppAPI protocol header version. | Supplied by AppAPI when available; default `4.0.0`. |
 | `AI_ORGANIZER_CONFIG` | Optional legacy/local YAML override. | Blank by default. |
@@ -202,7 +204,7 @@ Paperless integration is **optional**. When enabled, the organizer suggests rout
 
 For a **Paperless recommendation**, the review UI offers a Paperless action and a **Keep in Nextcloud** alternative, alongside applicable apply controls. For a **Nextcloud-only recommendation**, the main combined action is simply **Apply all**; there is no redundant Keep in Nextcloud button. In either case, review the proposed destination before applying it.
 
-The **Always keep in Nextcloud** list takes priority over **Prefer Paperless**. Both lists are editable in **Settings → Paperless** and persisted in SQLite. The built-in values are the initial defaults for a new install. The selected policy is not a guarantee that AI classification will always be correct; manual review remains important.
+The **Always keep in Nextcloud** list takes priority over **Prefer Paperless**. Both lists are editable in **Settings → Paperless** and persisted in SQLite. When Paperless is disabled, its consume-folder and routing-policy controls are removed from the page rather than merely hidden; their saved values are retained and restored if Paperless is enabled again. The built-in values are the initial defaults for a new install. The selected policy is not a guarantee that AI classification will always be correct; manual review remains important.
 
 ## PDF OCR and file types
 

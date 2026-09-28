@@ -28,7 +28,7 @@ class EnvironmentSettings:
     """
 
     app_id: str = "ai_organizer"
-    app_version: str = "0.2.1"
+    app_version: str = "0.2.2"
     app_api_version: str = "4.0.0"
     app_secret: str = field(default="", repr=False)
     app_user: str = ""
@@ -110,7 +110,7 @@ def load_environment_settings(*, load_env_file: bool = True) -> EnvironmentSetti
 
     return EnvironmentSettings(
         app_id=_env("APP_ID", "ai_organizer"),
-        app_version=_env("APP_VERSION", "0.2.1"),
+        app_version=_env("APP_VERSION", "0.2.2"),
         app_api_version=_env("AA_VERSION", "4.0.0"),
         app_secret=_env("APP_SECRET"),
         app_user=_env("APP_USER", nextcloud_username),
@@ -296,6 +296,30 @@ class SettingsService:
     def _inside(path, folder):
         return folder == '/' or path == folder or path.startswith(folder.rstrip('/') + '/')
 
+    @staticmethod
+    def normalize_ollama_url(value, *, required=False):
+        url = str(value or '').strip().rstrip('/')
+        if not url:
+            if required:
+                raise ValueError('Enter the Ollama server URL')
+            return ''
+        parts = urlsplit(url)
+        if parts.scheme not in ('http', 'https') or not parts.hostname or parts.username or parts.password or parts.path not in (
+                '', '/') or parts.query or parts.fragment:
+            raise ValueError('Ollama URL must be an http(s) host and optional port, without credentials or path')
+        return url
+
+    @staticmethod
+    def normalize_ollama_model(value, *, required=False):
+        model = str(value or '').strip()
+        if not model:
+            if required:
+                raise ValueError('Select an Ollama model')
+            return ''
+        if len(model) > 150 or any(c.isspace() for c in model):
+            raise ValueError('Select a valid Ollama model name')
+        return model
+
     @classmethod
     def validate(cls, incoming, *, allow_incomplete=False):
         allowed = {
@@ -309,21 +333,12 @@ class SettingsService:
             raise ValueError('Settings payload is missing keys or contains unknown settings')
         v = copy.deepcopy(incoming)
         v['file_types'] = validate_ids(v['file_types'])
-        url = str(v['ollama_url']).strip().rstrip('/')
-        if url:
-            parts = urlsplit(url)
-            if parts.scheme not in ('http', 'https') or not parts.hostname or parts.username or parts.password or parts.path not in (
-                    '', '/') or parts.query or parts.fragment:
-                raise ValueError('Ollama URL must be an http(s) host and optional port, without credentials or path')
-        elif not allow_incomplete:
-            raise ValueError('Enter the Ollama server URL')
-        v['ollama_url'] = url
-        v['model'] = str(v['model']).strip()
-        if v['model']:
-            if len(v['model']) > 150 or any(c.isspace() for c in v['model']):
-                raise ValueError('Select a valid Ollama model name')
-        elif not allow_incomplete:
-            raise ValueError('Select an Ollama model')
+        v['ollama_url'] = cls.normalize_ollama_url(
+            v['ollama_url'], required=not allow_incomplete
+        )
+        v['model'] = cls.normalize_ollama_model(
+            v['model'], required=not allow_incomplete
+        )
         for name, low, high in [('timeout', 5, 1800), ('max_content_chars', 500, 100000),
                                 ('interval_minutes', 1, 10080), ('ocr_max_pages', 1, 100)]:
             if isinstance(v[name], bool) or not isinstance(v[name], int) or not low <= v[name] <= high:
@@ -416,7 +431,13 @@ class SettingsService:
             # Empty Paperless policy lists mean "restore built-in defaults",
             # not "disable all policy". The effective defaults are persisted so
             # the Settings UI immediately reflects what the classifier is using.
-            validated = self.validate(self._restore_blank_policy_defaults(values))
+            # Persist partial first-run LLM configuration too. This lets an
+            # administrator save only the Ollama URL, then test/discover models
+            # without inventing a placeholder model. Analysis remains gated by
+            # is_configured() until both URL and model are present.
+            validated = self.validate(
+                self._restore_blank_policy_defaults(values), allow_incomplete=True
+            )
             self.organizer.database.save_settings(validated)
             self.values = validated
             self._apply(validated)

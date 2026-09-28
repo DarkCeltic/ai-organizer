@@ -22,7 +22,7 @@ window.fetch=async(url,options={})=>{
  const body=options.body ? JSON.parse(options.body) : null;
  window.requests.push({path,body});
  let payload={};let status=200;
- if(path==='api/settings')payload={settings:window.settings,automation:{}};
+ if(path==='api/settings')payload={settings:window.settings,automation:{},configured:true};
  else if(path.startsWith('api/dashboard/review'))payload={items:window.selected ? [] : [window.row],count:window.selected?0:1};
  else if(path.startsWith('api/dashboard/history'))payload={items:window.selected ? [{...window.row, status:'applied',selected_destination:window.selected,
    original_path:'/AI Inbox/receipt.pdf',last_known_path:'/Documents/Receipts/Grocery_Receipt.pdf',event_at:'2026-09-22 12:00:00',

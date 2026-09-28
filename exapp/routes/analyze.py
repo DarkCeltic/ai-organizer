@@ -117,6 +117,12 @@ def analyze_file(
     supersede_active: bool = False,
 ) -> Dict[str, Any]:
     organizer = _services(request)
+    settings = getattr(request.app.state, 'settings', None)
+    if settings is not None and not settings.is_configured():
+        raise HTTPException(
+            status_code=409,
+            detail='Configure an Ollama URL and model in AI Organizer Settings before analysis can start.',
+        )
     context = get_context(file_id)
 
     if context:

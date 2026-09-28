@@ -14,7 +14,7 @@
         Paperless candidates can be moved to the configured consume folder.
     </description>
 
-    <version>0.2.1</version>
+    <version>0.2.2</version>
     <licence>AGPL-3.0-or-later</licence>
     <author>darthdragon</author>
     <category>files</category>
@@ -39,7 +39,7 @@
         <docker-install>
             <registry>docker.io</registry>
             <image>darthdragon/ai-organizer</image>
-            <image-tag>0.2.1</image-tag>
+            <image-tag>0.2.2</image-tag>
         </docker-install>
 
         <environment-variables>

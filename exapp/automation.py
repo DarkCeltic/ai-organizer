@@ -48,6 +48,8 @@ class AutomationScheduler:
         while not self.stop.wait(15):
             try:
                 v = self.app.state.settings.get()
+                if not self.app.state.settings.is_configured():
+                    continue
                 if not self.enabled or not v['schedule_enabled'] or not (v['auto_analyze'] or v['auto_apply']):
                     continue
                 last = self.app.state.organizer.database.get_automation_run()
@@ -68,6 +70,8 @@ class AutomationScheduler:
         try:
             # Copy settings once: changes from Save affect the following run.
             v = self.app.state.settings.get()
+            if not self.app.state.settings.is_configured():
+                return
             if not self.enabled or not v['schedule_enabled']:
                 return
             db.start_automation_run()

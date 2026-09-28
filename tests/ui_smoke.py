@@ -28,7 +28,9 @@ def fake_api(route):
     url = urlparse(route.request.url)
     q = parse_qs(url.query)
     suffix = url.path.split('/ai_organizer/')[-1]
-    if suffix == 'api/dashboard/unprocessed':
+    if suffix == 'api/settings':
+        data = {'configured': True, 'settings': {}, 'automation': {}, 'file_types_catalog': []}
+    elif suffix == 'api/dashboard/unprocessed':
         data = {'items': [UNPROCESSED], 'count': 1}
     elif suffix == 'api/dashboard/review':
         data = {'items': [REVIEW], 'count': 1}

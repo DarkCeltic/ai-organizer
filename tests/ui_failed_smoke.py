@@ -26,7 +26,9 @@ def main():
         q = parse_qs(parsed.query)
         data = {}
         code = 200
-        if endpoint == 'api/dashboard/unprocessed':
+        if endpoint == 'api/settings':
+            data = {'configured': True, 'settings': {}, 'automation': {}, 'file_types_catalog': []}
+        elif endpoint == 'api/dashboard/unprocessed':
             records = [x for fid, x in FILES.items() if
                        not (fid == '101' and (state['failure'] or state['review'] or state['rejected']))
                        and not (fid == '102' and state['ignored'])]

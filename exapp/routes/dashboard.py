@@ -747,6 +747,12 @@ def reanalyze_history(file_id: str, body: HistoryReanalyzeRequest, request: Requ
     if not file_id.isdecimal():
         raise HTTPException(status_code=400, detail='Invalid Nextcloud file ID.')
     organizer = request.app.state.organizer
+    settings = getattr(request.app.state, 'settings', None)
+    if settings is not None and not settings.is_configured():
+        raise HTTPException(
+            status_code=409,
+            detail='Configure an Ollama URL and model in AI Organizer Settings before analysis can start.',
+        )
     db = organizer.database
     record = db.get_file_by_nextcloud_id(file_id)
     if not record or record.get('deleted_at'):

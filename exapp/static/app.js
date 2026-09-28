@@ -181,6 +181,147 @@
         let settingsAvailable = false;
         let settingsBusy = false;
         let firstRunPayload = null;
+        let analysisConfigured = false;
+        let settingsKnown = false;
+        let paperlessDraft = {inbox: '/inbox', neverSend: [], preferSend: []};
+        let onboardingPaperlessDraft = {inbox: '/inbox'};
+
+        const configurationMessage = 'Configure an Ollama URL and model in Settings before analysis can start.';
+
+        function updateAnalysisConfiguration(configured, {announce = false} = {}) {
+            analysisConfigured = Boolean(configured);
+            settingsKnown = true;
+            if (state.view !== 'settings') renderFileList();
+            if (!analysisConfigured) {
+                reanalyzeButton.disabled = true;
+                if (announce) setStatus(configurationMessage, 'error');
+            }
+        }
+
+        async function postOllama(path, payload) {
+            return api(`api/settings/ollama/${path}`, {
+                method: 'POST', body: JSON.stringify(payload)
+            });
+        }
+
+        function populateModelOptions(dataList, models) {
+            if (!dataList) return;
+            const values = Array.isArray(models) ? models : [];
+            dataList.replaceChildren(...values.map((model) => {
+                const option = document.createElement('option');
+                option.value = model;
+                return option;
+            }));
+        }
+
+        function setInlineStatus(output, message, kind = '') {
+            if (!output) return;
+            output.classList.remove('error', 'success');
+            if (kind) output.classList.add(kind);
+            output.textContent = message;
+        }
+
+        async function testOllama(urlInput, output) {
+            const url = urlInput?.value.trim() || '';
+            if (!url) {
+                setInlineStatus(output, 'Enter an Ollama URL first.', 'error');
+                return;
+            }
+            setInlineStatus(output, 'Testing Ollama connection…');
+            try {
+                const result = await postOllama('test', {url});
+                setInlineStatus(output, result.version
+                    ? `Connected to Ollama ${result.version}.`
+                    : 'Connected to Ollama.', 'success');
+            } catch (error) {
+                setInlineStatus(output, `Connection failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function discoverOllamaModels(urlInput, modelInput, dataList, output) {
+            const url = urlInput?.value.trim() || '';
+            if (!url) {
+                setInlineStatus(output, 'Enter an Ollama URL first.', 'error');
+                return;
+            }
+            setInlineStatus(output, 'Discovering local Ollama models…');
+            try {
+                const result = await postOllama('models', {url});
+                populateModelOptions(dataList, result.models);
+                setInlineStatus(output, result.models.length
+                    ? `${result.models.length} local model(s) found. Choose one from the Model field or type a new model name.`
+                    : 'Connected, but no local models are installed yet. You can type a model name to download it.',
+                result.models.length ? 'success' : '');
+                modelInput?.focus();
+            } catch (error) {
+                populateModelOptions(dataList, []);
+                setInlineStatus(output, `Model discovery failed: ${error.message}`, 'error');
+            }
+        }
+
+        const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+        async function waitForOllamaPull(jobId, model, output, button, dataList, modelInput, urlInput) {
+            // Poll a lightweight ExApp status record instead of holding a browser/AppAPI
+            // request open for a model download that may take many minutes.
+            for (let attempt = 0; attempt < 1800; attempt += 1) {
+                await sleep(2000);
+                try {
+                    const status = await api(`api/settings/ollama/pull/${encodeURIComponent(jobId)}`);
+                    if (status.status === 'failed') {
+                        setInlineStatus(output, status.error || status.message || `Model download failed: ${model}.`, 'error');
+                        if (button?.isConnected) button.disabled = false;
+                        return;
+                    }
+                    if (status.status === 'completed') {
+                        setInlineStatus(output, status.message || `Model download completed: ${model}.`, 'success');
+                        if (button?.isConnected) button.disabled = false;
+                        // Refresh the same editable Model field's datalist so the newly
+                        // downloaded model appears without creating a second select box.
+                        try {
+                            const result = await postOllama('models', {url: urlInput?.value.trim() || ''});
+                            populateModelOptions(dataList, result.models);
+                            if (modelInput && !modelInput.value.trim()) modelInput.value = model;
+                        } catch (_) {
+                            // Completion is still valid even if the follow-up refresh fails.
+                        }
+                        return;
+                    }
+                    setInlineStatus(output, status.message || `Downloading ${model}…`, 'success');
+                } catch (error) {
+                    setInlineStatus(output, `Unable to check model download status: ${error.message}`, 'error');
+                    if (button?.isConnected) button.disabled = false;
+                    return;
+                }
+            }
+            setInlineStatus(output,
+                `Download is still running for ${model}. Use Discover Models later to confirm when it finishes.`,
+                'success');
+            if (button?.isConnected) button.disabled = false;
+        }
+
+        async function pullOllamaModel(urlInput, modelInput, output, button, dataList) {
+            const url = urlInput?.value.trim() || '';
+            const model = modelInput?.value.trim() || '';
+            if (!url || !model) {
+                setInlineStatus(output, 'Enter both an Ollama URL and model name before pulling.', 'error');
+                return;
+            }
+            if (button) button.disabled = true;
+            setInlineStatus(output, `Starting download of ${model}…`);
+            try {
+                const result = await postOllama('pull', {url, model});
+                setInlineStatus(output, result.message || `Model download started: ${model}.`, 'success');
+                if (result.job_id) {
+                    void waitForOllamaPull(result.job_id, model, output, button, dataList, modelInput, urlInput);
+                } else if (button?.isConnected) {
+                    button.disabled = false;
+                }
+            } catch (error) {
+                if (button?.isConnected) button.disabled = false;
+                setInlineStatus(output, `Model download could not start: ${error.message}`, 'error');
+            }
+        }
 
         const onboarding = document.createElement('div');
         onboarding.className = 'organizer-onboarding hidden';
@@ -198,15 +339,22 @@
                 <label>Ollama URL
                     <input id="onboarding-ollama-url" type="url" placeholder="http://192.168.1.2:11434" autocomplete="off">
                 </label>
+                <button type="button" class="secondary" id="onboarding-test-ollama">Test connection</button>
+                <div id="onboarding-ollama-status" class="hint" role="status" aria-live="polite"></div>
                 <label>Ollama model
-                    <input id="onboarding-ollama-model" type="text" placeholder="qwen2.5:7b" autocomplete="off">
+                    <input id="onboarding-ollama-model" type="text" list="onboarding-model-options"
+                        placeholder="qwen2.5:7b" autocomplete="off">
+                    <datalist id="onboarding-model-options"></datalist>
                 </label>
+                <div class="settings-inline-actions">
+                    <button type="button" class="secondary" id="onboarding-discover-models">Discover models</button>
+                    <button type="button" class="secondary" id="onboarding-pull-model">Pull model</button>
+                </div>
+                <div id="onboarding-model-status" class="hint" role="status" aria-live="polite"></div>
                 <label class="settings-toggle">
                     <input id="onboarding-paperless" type="checkbox"> Enable Paperless integration
                 </label>
-                <label>Paperless consume folder
-                    <input id="onboarding-paperless-inbox" type="text" value="/inbox" placeholder="/inbox">
-                </label>
+                <div id="onboarding-paperless-details"></div>
                 <div id="onboarding-feedback" class="settings-feedback" role="status" aria-live="polite"></div>
                 <div class="organizer-onboarding-actions">
                     <button type="button" class="primary" id="onboarding-save">Save & continue</button>
@@ -216,13 +364,34 @@
             </div>`;
         shell.appendChild(onboarding);
 
+        function captureOnboardingPaperless() {
+            const inbox = onboarding.querySelector('#onboarding-paperless-inbox');
+            if (inbox) onboardingPaperlessDraft.inbox = inbox.value.trim() || '/inbox';
+        }
+
+        function renderOnboardingPaperless() {
+            const holder = onboarding.querySelector('#onboarding-paperless-details');
+            captureOnboardingPaperless();
+            holder.replaceChildren();
+            if (!onboarding.querySelector('#onboarding-paperless').checked) return;
+            holder.innerHTML = `
+                <label>Paperless consume folder
+                    <input id="onboarding-paperless-inbox" type="text"
+                        value="${escapeHtml(onboardingPaperlessDraft.inbox || '/inbox')}" placeholder="/inbox">
+                </label>`;
+        }
+
         function showOnboarding(data) {
             firstRunPayload = data;
             const settings = data?.settings || {};
             onboarding.querySelector('#onboarding-ollama-url').value = settings.ollama_url || '';
             onboarding.querySelector('#onboarding-ollama-model').value = settings.model || '';
             onboarding.querySelector('#onboarding-paperless').checked = Boolean(settings.paperless_enabled);
-            onboarding.querySelector('#onboarding-paperless-inbox').value = settings.paperless_inbox || '/inbox';
+            onboardingPaperlessDraft = {inbox: settings.paperless_inbox || '/inbox'};
+            renderOnboardingPaperless();
+            populateModelOptions(onboarding.querySelector('#onboarding-model-options'), []);
+            onboarding.querySelector('#onboarding-ollama-status').textContent = '';
+            onboarding.querySelector('#onboarding-model-status').textContent = '';
             onboarding.querySelector('#onboarding-feedback').textContent = '';
             onboarding.classList.remove('hidden');
             onboarding.querySelector('#onboarding-ollama-url').focus();
@@ -242,6 +411,7 @@
                 feedback.classList.add('error');
                 return;
             }
+            captureOnboardingPaperless();
             settingsBusy = true;
             feedback.classList.remove('error');
             feedback.textContent = 'Saving settings…';
@@ -251,13 +421,14 @@
                     ollama_url: url,
                     model,
                     paperless_enabled: onboarding.querySelector('#onboarding-paperless').checked,
-                    paperless_inbox: onboarding.querySelector('#onboarding-paperless-inbox').value.trim() || '/inbox'
+                    paperless_inbox: onboardingPaperlessDraft.inbox || '/inbox'
                 };
                 const result = await api('api/settings', {
                     method: 'PUT', body: JSON.stringify({settings})
                 });
                 firstRunPayload.settings = result.settings;
                 firstRunPayload.configured = result.configured;
+                updateAnalysisConfiguration(result.configured);
                 closeOnboarding();
                 setStatus('AI Organizer setup saved. Select a file to begin.');
             } catch (error) {
@@ -268,11 +439,29 @@
             }
         }
 
+        onboarding.addEventListener('change', (event) => {
+            if (event.target.id === 'onboarding-paperless') renderOnboardingPaperless();
+        });
+
         onboarding.addEventListener('click', (event) => {
             const button = event.target.closest('button');
             if (!button) return;
+            const urlInput = onboarding.querySelector('#onboarding-ollama-url');
+            const modelInput = onboarding.querySelector('#onboarding-ollama-model');
             if (button.id === 'onboarding-save') void saveOnboarding();
-            else if (button.id === 'onboarding-later') closeOnboarding();
+            else if (button.id === 'onboarding-test-ollama') {
+                void testOllama(urlInput, onboarding.querySelector('#onboarding-ollama-status'));
+            } else if (button.id === 'onboarding-discover-models') {
+                void discoverOllamaModels(
+                    urlInput, modelInput, onboarding.querySelector('#onboarding-model-options'),
+                    onboarding.querySelector('#onboarding-model-status')
+                );
+            } else if (button.id === 'onboarding-pull-model') {
+                void pullOllamaModel(
+                    urlInput, modelInput, onboarding.querySelector('#onboarding-model-status'), button,
+                    onboarding.querySelector('#onboarding-model-options')
+                );
+            } else if (button.id === 'onboarding-later') closeOnboarding();
             else if (button.id === 'onboarding-advanced') {
                 closeOnboarding();
                 const settingsButton = sidebar.querySelector('[data-view="settings"]');
@@ -294,6 +483,11 @@
         function renderSettings(settings, automation) {
             const activeTab = settingsPanel.querySelector('[data-settings-tab][aria-current="page"]')?.dataset.settingsTab || 'llm';
             const checked = (value) => value ? 'checked' : '';
+            paperlessDraft = {
+                inbox: settings.paperless_inbox || '/inbox',
+                neverSend: Array.isArray(settings.paperless_never_send) ? [...settings.paperless_never_send] : [],
+                preferSend: Array.isArray(settings.paperless_prefer_send) ? [...settings.paperless_prefer_send] : []
+            };
             settingsPanel.innerHTML = `
                 <header class="settings-heading">
                     <div><h2>Settings</h2><p>Administrator configuration — saved to SQLite.</p></div>
@@ -312,13 +506,20 @@
                 <div class="settings-content">
                     <section class="settings-section" data-section="llm">
                         <h3>Local LLM</h3>
-                        <label>Ollama URL <input id="setting-url" type="url" required
+                        <label>Ollama URL <input id="setting-url" type="url"
                             value="${escapeHtml(settings.ollama_url)}" placeholder="http://192.168.1.2:11434"></label>
-                        <label>Model <input id="setting-model" required list="settings-model-options"
-                            value="${escapeHtml(settings.model)}"></label>
-                        <datalist id="settings-model-options"></datalist>
-                        <button type="button" class="secondary" id="settings-model-test">Test connection / discover models</button>
-                        <div id="settings-model-results" class="hint" role="status"></div>
+                        <button type="button" class="secondary" id="settings-ollama-test">Test connection</button>
+                        <div id="settings-ollama-status" class="hint" role="status" aria-live="polite"></div>
+                        <label>Model <input id="setting-model" type="text" list="settings-model-options"
+                            value="${escapeHtml(settings.model)}" placeholder="qwen2.5:7b">
+                            <datalist id="settings-model-options"></datalist>
+                        </label>
+                        <div class="settings-inline-actions">
+                            <button type="button" class="secondary" id="settings-model-discover">Discover models</button>
+                            <button type="button" class="secondary" id="settings-model-pull">Pull model</button>
+                        </div>
+                        <div id="settings-model-results" class="hint" role="status" aria-live="polite"></div>
+                        <p class="hint">You may save the Ollama URL before choosing a model. Analysis remains disabled until both are configured.</p>
                         <label>Request timeout (seconds) <input id="setting-timeout" type="number" min="5"
                             max="1800" required value="${settings.timeout}"></label>
                         <label>Temperature (0–2; lower is more consistent)
@@ -372,25 +573,8 @@
                         <p class="hint">Optional. This only moves a file into the configured Nextcloud consume folder; Paperless must already be connected to that folder.</p>
                         <label class="settings-toggle"><input id="setting-paperless-enabled" type="checkbox"
                             ${checked(settings.paperless_enabled)}> Enable Paperless integration</label>
-                        <label>Nextcloud Paperless consume folder
-                            <input id="setting-paperless-inbox" type="text" required list="settings-folder-options"
-                                value="${escapeHtml(settings.paperless_inbox)}" placeholder="/inbox"></label>
-                        <label>Always keep in Nextcloud (one category per line)
-                            <textarea id="setting-paperless-never-send" rows="7"
-                                placeholder="resume&#10;source_code&#10;project"
-                                >${escapeHtml((settings.paperless_never_send || []).join('\n'))}</textarea></label>
-                        <p class="hint">These categories are never recommended for Paperless. They are administrator policy,
-                            match the AI's document category rather than filename keywords, and take precedence over preferred categories.
-                            If this list is cleared, the built-in defaults are restored automatically.</p>
-                        <label>Prefer Paperless (one category per line)
-                            <textarea id="setting-paperless-prefer-send" rows="7"
-                                placeholder="receipt&#10;invoice&#10;statement&#10;tax"
-                                >${escapeHtml((settings.paperless_prefer_send || []).join('\n'))}</textarea></label>
-                        <p class="hint">These categories recommend Paperless when the document is classified into that category.
-                            Categories not listed in either policy use the AI's archival-record versus working-file heuristic.
-                            If this list is cleared, the built-in defaults are restored automatically.
-                            You still choose the destination manually, and Automatic Apply never sends files to Paperless.</p>
-                        <p class="hint">When disabled, the AI only recommends Nextcloud. Enabling integration does not make Paperless routing automatic.</p>
+                        <div id="settings-paperless-details"></div>
+                        <p class="hint">When disabled, the AI only recommends Nextcloud. Saved Paperless settings are retained for later use.</p>
                     </section>
                     <section class="settings-section hidden" data-section="scheduling">
                         <h3>Scheduling and automation</h3>
@@ -447,6 +631,7 @@
                     </section>
                 </div>`;
             settingsRows(settingsPanel.querySelector('#settings-rules'), settings.folder_rules);
+            renderPaperlessSettingsDetails();
             showSettingsTab(activeTab);
         }
 
@@ -464,9 +649,49 @@
             return settingsPanel.querySelector(`#${id}`);
         }
 
+        function splitLines(value) {
+            return String(value || '').split(/\r?\n/)
+                .map((item) => item.trim()).filter(Boolean);
+        }
+
+        function capturePaperlessDraft() {
+            const inbox = settingsValue('setting-paperless-inbox');
+            const neverSend = settingsValue('setting-paperless-never-send');
+            const preferSend = settingsValue('setting-paperless-prefer-send');
+            if (inbox) paperlessDraft.inbox = inbox.value.trim() || '/inbox';
+            if (neverSend) paperlessDraft.neverSend = splitLines(neverSend.value);
+            if (preferSend) paperlessDraft.preferSend = splitLines(preferSend.value);
+        }
+
+        function renderPaperlessSettingsDetails() {
+            const holder = settingsValue('settings-paperless-details');
+            const enabled = settingsValue('setting-paperless-enabled');
+            if (!holder || !enabled) return;
+            capturePaperlessDraft();
+            holder.replaceChildren();
+            if (!enabled.checked) return;
+            holder.innerHTML = `
+                <label>Nextcloud Paperless consume folder
+                    <input id="setting-paperless-inbox" type="text" required list="settings-folder-options"
+                        value="${escapeHtml(paperlessDraft.inbox || '/inbox')}" placeholder="/inbox"></label>
+                <label>Always keep in Nextcloud (one category per line)
+                    <textarea id="setting-paperless-never-send" rows="7"
+                        placeholder="resume&#10;source_code&#10;project">${escapeHtml((paperlessDraft.neverSend || []).join('\n'))}</textarea></label>
+                <p class="hint">These categories are never recommended for Paperless. They are administrator policy,
+                    match the AI's document category rather than filename keywords, and take precedence over preferred categories.
+                    If this list is cleared, the built-in defaults are restored automatically.</p>
+                <label>Prefer Paperless (one category per line)
+                    <textarea id="setting-paperless-prefer-send" rows="7"
+                        placeholder="receipt&#10;invoice&#10;statement&#10;tax">${escapeHtml((paperlessDraft.preferSend || []).join('\n'))}</textarea></label>
+                <p class="hint">These categories recommend Paperless when the document is classified into that category.
+                    Categories not listed in either policy use the AI's archival-record versus working-file heuristic.
+                    If this list is cleared, the built-in defaults are restored automatically.
+                    You still choose the destination manually, and Automatic Apply never sends files to Paperless.</p>`;
+        }
+
         function collectSettings() {
-            const lines = (id) => settingsValue(id).value.split(/\r?\n/)
-                .map((value) => value.trim()).filter(Boolean);
+            const lines = (id) => splitLines(settingsValue(id)?.value);
+            capturePaperlessDraft();
             return {
                 ollama_url: settingsValue('setting-url').value.trim(),
                 model: settingsValue('setting-model').value.trim(),
@@ -486,9 +711,9 @@
                 auto_apply_warning_accepted: settingsValue('setting-warning').checked,
                 minimum_auto_confidence: 0.95,
                 paperless_enabled: settingsValue('setting-paperless-enabled').checked,
-                paperless_inbox: settingsValue('setting-paperless-inbox').value.trim(),
-                paperless_never_send: lines('setting-paperless-never-send'),
-                paperless_prefer_send: lines('setting-paperless-prefer-send'),
+                paperless_inbox: paperlessDraft.inbox || '/inbox',
+                paperless_never_send: [...(paperlessDraft.neverSend || [])],
+                paperless_prefer_send: [...(paperlessDraft.preferSend || [])],
                 global_instructions: settingsValue('setting-global-rules').value,
                 folder_rules: Array.from(settingsPanel.querySelectorAll('.settings-rule')).map((row) => ({
                     folder: row.querySelector('[data-rule-folder]').value.trim(),
@@ -510,23 +735,29 @@
                 const data = await api('api/settings');
                 if (state.view !== 'settings') return;
                 fileTypeCatalog = Array.isArray(data.file_types_catalog) ? data.file_types_catalog : [];
+                updateAnalysisConfiguration(data.configured);
                 renderSettings(data.settings, data.automation);
             } catch (error) {
                 settingsPanel.textContent = `Unable to load settings: ${error.message}`;
             }
         }
 
-        async function discoverModels() {
-            const output = settingsPanel.querySelector('#settings-model-results');
-            output.textContent = 'Checking Ollama…';
-            try {
-                const result = await api('api/settings/models');
-                output.textContent = `Connected. ${result.models.length} model(s) found. Save the URL first if you changed it.`;
-                settingsValue('settings-model-options').innerHTML = result.models.map((model) =>
-                    `<option value="${escapeHtml(model)}"></option>`).join('');
-            } catch (error) {
-                output.textContent = `Connection failed: ${error.message}`;
-            }
+        async function testSettingsOllama() {
+            await testOllama(settingsValue('setting-url'), settingsValue('settings-ollama-status'));
+        }
+
+        async function discoverSettingsModels() {
+            await discoverOllamaModels(
+                settingsValue('setting-url'), settingsValue('setting-model'),
+                settingsValue('settings-model-options'), settingsValue('settings-model-results')
+            );
+        }
+
+        async function pullSettingsModel(button) {
+            await pullOllamaModel(
+                settingsValue('setting-url'), settingsValue('setting-model'),
+                settingsValue('settings-model-results'), button, settingsValue('settings-model-options')
+            );
         }
 
         async function discoverFolders() {
@@ -554,8 +785,11 @@
                 const data = await api('api/settings', {
                     method: 'PUT', body: JSON.stringify({settings: value})
                 });
+                updateAnalysisConfiguration(data.configured, {announce: !data.configured});
                 renderSettings(data.settings, null);
-                settingsFeedback('Settings saved to SQLite and applied to the running organizer.');
+                settingsFeedback(data.configured
+                    ? 'Settings saved to SQLite and applied to the running organizer.'
+                    : 'Settings saved. Add both an Ollama URL and model before analysis can start.');
             } catch (error) {
                 settingsFeedback(`Settings not saved: ${error.message}`, true);
             } finally {
@@ -568,7 +802,9 @@
             if (!button || !settingsPanel.contains(button)) return;
             if (button.dataset.settingsTab) showSettingsTab(button.dataset.settingsTab);
             else if (button.id === 'settings-save') void saveSettings();
-            else if (button.id === 'settings-model-test') void discoverModels();
+            else if (button.id === 'settings-ollama-test') void testSettingsOllama();
+            else if (button.id === 'settings-model-discover') void discoverSettingsModels();
+            else if (button.id === 'settings-model-pull') void pullSettingsModel(button);
             else if (button.id === 'settings-refresh-folders') void discoverFolders();
             else if (button.id === 'settings-add-rule' || button.hasAttribute('data-remove-rule')) {
                 const rules = Array.from(settingsPanel.querySelectorAll('.settings-rule')).map((row) => ({
@@ -586,6 +822,12 @@
                 const existing = target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
                 if (!existing.includes(folder)) existing.push(folder);
                 target.value = existing.join('\n');
+            }
+        });
+
+        settingsPanel.addEventListener('change', (event) => {
+            if (event.target.id === 'setting-paperless-enabled') {
+                renderPaperlessSettingsDetails();
             }
         });
 
@@ -691,7 +933,7 @@
                 </div>`;
             suggestionEl.classList.remove('hidden');
             editor.scrollTop = 0;
-            reanalyzeButton.disabled = false;
+            reanalyzeButton.disabled = !analysisConfigured;
         }
 
         function showHistoryRecord(record) {
@@ -707,7 +949,7 @@
             state.currentSuggestion = null;
             state.historyRecord = record;
             showPreview(record.deleted ? null : record.file_id);
-            const canReanalyze = !record.deleted && /^\d+$/.test(String(record.file_id || ''))
+            const canReanalyze = analysisConfigured && !record.deleted && /^\d+$/.test(String(record.file_id || ''))
                 && ['ignored', 'applied', 'rejected'].includes(record.status);
             editorTitle.textContent = 'Historical record';
             reanalyzeButton.textContent = 'Re-analyze from History';
@@ -753,7 +995,7 @@
             state.currentSuggestion = null;
             showPreview(record.file_id);
             editorTitle.textContent = 'Failed analysis';
-            reanalyzeButton.disabled = false;
+            reanalyzeButton.disabled = !analysisConfigured;
             suggestionEl.innerHTML = `
                 <div class="file-title"><div>
                     <span class="eyebrow">Analysis failed</span>
@@ -767,7 +1009,7 @@
                     <p><strong>Error:</strong> ${escapeHtml(record.error || 'Unknown error')}</p>
                 </div>
                 <div class="decision-actions">
-                    <button type="button" class="primary" data-failed-retry>${record.stage === 'ocr' ? 'Retry OCR' : 'Retry analysis'}</button>
+                    <button type="button" class="primary" data-failed-retry ${analysisConfigured ? '' : 'disabled title="Configure Ollama URL and model first"'}>${record.stage === 'ocr' ? 'Retry OCR' : 'Retry analysis'}</button>
                     <button type="button" class="secondary" data-decision="ignore">Ignore file</button>
                 </div>`;
             suggestionEl.classList.remove('hidden');
@@ -856,11 +1098,13 @@
                 const preview = (!history || !item.deleted) ? previewHref(item.file_id) : null;
                 const previewAction = preview ? `<a class="organizer-preview" href="${escapeHtml(preview)}"
                     target="_blank" rel="noopener noreferrer" aria-label="Preview ${name} in Nextcloud">Preview ↗</a>` : '';
+                const analysisDisabled = !review && !analysisConfigured
+                    ? 'disabled title="Configure Ollama URL and model first"' : '';
                 const buttons = history
                     ? `<div class="row-actions"><button type="button" data-history-index="${index}">Details</button>${previewAction}</div>`
                     : `<div class="row-actions">
                         ${previewAction}
-                        <button type="button" data-file-index="${index}">${review ? 'Revisit' : failed ? 'Retry' : 'Analyze'}</button>
+                        <button type="button" data-file-index="${index}" ${analysisDisabled}>${review ? 'Revisit' : failed ? 'Retry' : 'Analyze'}</button>
                         ${review ? `<button type="button" class="secondary" data-decision="reject" data-record-index="${index}">Reject</button>` : ''}
                         <button type="button" class="secondary" data-decision="ignore" data-record-index="${index}">Ignore</button>
                     </div>`;
@@ -964,11 +1208,19 @@
                 ? 'Select a History entry to inspect its recorded details.'
                 : view === 'failed' ? 'Select a failed file to review its error or retry analysis.'
                     : 'Select a file above to analyze or review its suggestion.');
+            if (!analysisConfigured && ['unprocessed', 'failed'].includes(view)) {
+                setStatus(configurationMessage, 'error');
+            }
             void refreshDashboard();
         }
 
         async function analyze(force = false) {
             if (!state.currentFileId || state.view === 'history') return;
+            if (!analysisConfigured) {
+                reanalyzeButton.disabled = true;
+                setStatus(configurationMessage, 'error');
+                return;
+            }
             const fileId = state.currentFileId;
             let currentPath = state.currentFile?.path || '';
             state.currentSuggestion = null;
@@ -1002,7 +1254,7 @@
                     setStatus(`Analysis failed: ${escapeHtml(error.message)}. Saved to Failed; choose Failed to retry.`, 'error');
                     void refreshDashboard();
                 } else {
-                    reanalyzeButton.disabled = false;
+                    reanalyzeButton.disabled = !analysisConfigured;
                     setStatus(`<strong>Unable to analyze:</strong> ${escapeHtml(error.message)}. Failure could not be saved (or file was archived).`, 'error');
                 }
             }
@@ -1010,6 +1262,11 @@
 
         async function reanalyzeHistorical() {
             const record = state.historyRecord;
+            if (!analysisConfigured) {
+                reanalyzeButton.disabled = true;
+                setStatus(configurationMessage, 'error');
+                return;
+            }
             if (state.busy || state.view !== 'history' || !record || record.deleted ||
                 !['ignored', 'applied', 'rejected'].includes(record.status)) return;
             if (record.status === 'ignored' && !window.confirm(
@@ -1031,7 +1288,7 @@
                 setStatus('New suggestion created in Review. Previous History records were preserved. '
                     + 'Any earlier Review suggestion was archived as Superseded. Automatic Apply is disabled for this suggestion.', 'success');
             } catch (error) {
-                reanalyzeButton.disabled = false;
+                reanalyzeButton.disabled = !analysisConfigured;
                 setStatus(`<strong>Re-analysis failed:</strong> ${escapeHtml(error.message)}. Historical records remain unchanged; check Failed if analysis started.`, 'error');
             } finally {
                 state.busy = false;
@@ -1122,8 +1379,10 @@
                     const savedEtag = String(file.etag || '').replaceAll('"', '');
                     const liveEtag = String(context.etag || '').replaceAll('"', '');
                     if (savedEtag && liveEtag && savedEtag !== liveEtag) {
-                        reanalyzeButton.disabled = false;
-                        setStatus('The file changed after its suggestion was saved. Re-analyze before applying.', 'error');
+                        reanalyzeButton.disabled = !analysisConfigured;
+                        setStatus(analysisConfigured
+                            ? 'The file changed after its suggestion was saved. Re-analyze before applying.'
+                            : configurationMessage, 'error');
                     } else {
                         renderSuggestion(context, file);
                         setStatus('Saved suggestion loaded. Nothing changes until you click Apply.', 'success');
@@ -1138,7 +1397,7 @@
                 if (saved) void refreshDashboard();
             } finally {
                 state.busy = false;
-                button.disabled = false;
+                button.disabled = !analysisConfigured && view !== 'review';
             }
         });
 
@@ -1241,27 +1500,37 @@
 
         const fileIds = (new URLSearchParams(window.location.search).get('fileIds') || '')
             .split(',').map((value) => value.trim()).filter(Boolean);
-        clearSelection('Select an Unprocessed file to analyze, or switch to Review, Failed or History.');
+        clearSelection('Checking AI Organizer configuration…');
         void refreshDashboard();
+
+        function handleInitialFileAction() {
+            if (fileIds.length > 1) {
+                setStatus('Select a single file and choose AI Organize. Multiple-file analysis is not supported.', 'error');
+            } else if (fileIds.length === 1) {
+                state.currentFileId = fileIds[0];
+                showPreview(fileIds[0]);
+                if (analysisConfigured) void analyze(false);
+                else setStatus(configurationMessage, 'error');
+            }
+        }
+
         // Nextcloud AppAPI checks ADMIN access. A 403 never exposes the Settings tab.
         void api('api/settings').then((data) => {
             settingsAvailable = true;
             const button = sidebar.querySelector('[data-view="settings"]');
             if (button) button.hidden = false;
             fileTypeCatalog = Array.isArray(data.file_types_catalog) ? data.file_types_catalog : [];
+            updateAnalysisConfiguration(data.configured, {announce: data.configured === false});
             if (data.configured === false) showOnboarding(data);
+            else if (!fileIds.length) setStatus('Select an Unprocessed file to analyze, or switch to Review, Failed or History.');
+            handleInitialFileAction();
         }).catch((error) => {
+            settingsKnown = true;
             if (error.status !== 403 && error.status !== 401) {
                 console.warn('AI Organizer: Settings availability check failed', error);
             }
+            setStatus('Unable to verify Ollama configuration. Analysis is disabled until Settings can be loaded.', 'error');
         });
-        if (fileIds.length > 1) {
-            setStatus('Select a single file and choose AI Organize. Multiple-file analysis is not supported.', 'error');
-        } else if (fileIds.length === 1) {
-            state.currentFileId = fileIds[0];
-            showPreview(fileIds[0]);
-            void analyze(false);
-        }
     }
 
     if (document.readyState === 'loading') {
