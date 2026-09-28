@@ -15,6 +15,7 @@ import yaml
 from python_organizer_local_llm.sensitive import is_sensitive, safe_suggestion
 from python_organizer_local_llm.suggestion_policy import improve_suggestion
 from python_organizer_local_llm.settings import EnvironmentSettings, load_environment_settings
+from python_organizer_local_llm.config_defaults import load_config
 
 
 class Classifier:
@@ -94,11 +95,11 @@ class Classifier:
 
     def __init__(
             self,
-            config_file: str = "config.yaml",
+            config_file: Optional[str] = None,
             runtime_settings: Optional[EnvironmentSettings] = None,
     ):
         self.log = logging.getLogger("classifier")
-        self.config = self._load_config(config_file)
+        self.config = load_config(config_file)
         runtime = runtime_settings or load_environment_settings(load_env_file=False)
         self.global_instructions = ""
         self.folder_rules = []
@@ -2410,37 +2411,6 @@ Return JSON only.
                 "Low-confidence suggestion: %.2f",
                 confidence,
             )
-
-    @staticmethod
-    def _load_config(config_file: str) -> Dict:
-        """Load YAML configuration."""
-        try:
-            with open(
-                    config_file,
-                    "r",
-                    encoding="utf-8",
-            ) as file:
-                config = yaml.safe_load(file)
-
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                f"Configuration file not found: {config_file}"
-            ) from exc
-
-        except yaml.YAMLError as exc:
-            raise RuntimeError(
-                f"Invalid YAML configuration: {config_file}"
-            ) from exc
-
-        if config is None:
-            config = {}
-
-        if not isinstance(config, dict):
-            raise RuntimeError(
-                "Configuration root must be a YAML mapping."
-            )
-
-        return config
 
     def is_never_paperless(self, category: str, filename: str) -> bool:
         """Return whether administrator policy keeps this category in Nextcloud.

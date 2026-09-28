@@ -14,10 +14,22 @@
         Paperless candidates can be moved to the configured consume folder.
     </description>
 
-    <version>0.2.0</version>
+    <version>0.2.1</version>
     <licence>AGPL-3.0-or-later</licence>
-    <author>Local deployment</author>
+    <author>darthdragon</author>
     <category>files</category>
+    <category>ai</category>
+    <category>organization</category>
+
+    <website>https://github.com/DarkCeltic/ai-organizer</website>
+    <bugs>https://github.com/DarkCeltic/ai-organizer/issues</bugs>
+    <repository>https://github.com/DarkCeltic/ai-organizer</repository>
+
+    <documentation>
+        <user>https://github.com/DarkCeltic/ai-organizer#readme</user>
+        <admin>https://github.com/DarkCeltic/ai-organizer#readme</admin>
+        <developer>https://github.com/DarkCeltic/ai-organizer</developer>
+    </documentation>
 
     <dependencies>
         <nextcloud min-version="33" max-version="34"/>
@@ -27,36 +39,23 @@
         <docker-install>
             <registry>docker.io</registry>
             <image>darthdragon/ai-organizer</image>
-            <image-tag>0.2.0</image-tag>
+            <image-tag>0.2.1</image-tag>
         </docker-install>
 
         <environment-variables>
-            <variable>
-                <name>NEXTCLOUD_USERNAME</name>
-                <display-name>Nextcloud Username</display-name>
-                <description>
-                    Nextcloud account AI Organizer will use to access and organize files.
-                </description>
-            </variable>
-
-            <variable>
-                <name>NEXTCLOUD_APP_PASSWORD</name>
-                <display-name>Nextcloud App Password</display-name>
-                <description>
-                    Nextcloud app password for the account used by AI Organizer.
-                </description>
-            </variable>
 
             <variable>
                 <name>OLLAMA_URL</name>
                 <display-name>Ollama URL</display-name>
-                <description>URL of the Ollama server, for example http://192.168.1.2:11434</description>
+                <description>Optional initial Ollama URL. It can also be configured after installation in AI Organizer Settings.</description>
+                <default></default>
             </variable>
 
             <variable>
                 <name>OLLAMA_MODEL</name>
                 <display-name>Ollama Model</display-name>
-                <description>Ollama model used for document classification</description>
+                <description>Optional initial Ollama model. It can also be configured after installation in AI Organizer Settings.</description>
+                <default></default>
             </variable>
 
             <variable>
@@ -70,14 +69,28 @@
                 <name>INBOX_PATH</name>
                 <display-name>Paperless Inbox Path</display-name>
                 <description>
-                    Nextcloud folder used for Paperless-ngx documents.
-                    Leave empty when Paperless integration is disabled.
+                    Optional Nextcloud folder used for Paperless-ngx documents.
+                    The default is /inbox.
                 </description>
-                <default></default>
+                <default>/inbox</default>
             </variable>
         </environment-variables>
 
         <routes>
+            <!--
+                Nextcloud loads registered Top Menu CSS/JS through the AppAPI proxy.
+                Static assets contain no credentials or user data and must be reachable
+                without an ADMIN route check, otherwise AppAPI may return an HTML error
+                page for app.css/app.js and the embedded UI renders blank.
+            -->
+            <route>
+                <url>^/static/.*$</url>
+                <verb>GET</verb>
+                <access_level>PUBLIC</access_level>
+                <headers_to_exclude>[]</headers_to_exclude>
+                <bruteforce_protection>[]</bruteforce_protection>
+            </route>
+
             <route>
                 <url>^/api/settings(?:/.*)?$</url>
                 <verb>GET,POST,PUT</verb>
@@ -87,9 +100,9 @@
             </route>
 
             <route>
-                <url>^(?!/api/settings(?:/|$)).*</url>
+                <url>^(?!/static/)(?!/api/settings(?:/|$)).*</url>
                 <verb>GET,POST,PUT,DELETE</verb>
-                <access_level>USER</access_level>
+                <access_level>ADMIN</access_level>
                 <headers_to_exclude>[]</headers_to_exclude>
                 <bruteforce_protection>[401,403,500]</bruteforce_protection>
             </route>

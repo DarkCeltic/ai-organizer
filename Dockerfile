@@ -34,7 +34,6 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY exapp /app/exapp
 COPY python_organizer_local_llm /app/python_organizer_local_llm
-COPY config.example.yaml /app/config.yaml
 COPY appinfo /app/appinfo
 COPY --chmod=0755 start.sh /start.sh
 COPY --chmod=0755 run.sh /run.sh

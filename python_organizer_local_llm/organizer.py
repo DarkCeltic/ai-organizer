@@ -14,7 +14,7 @@ from python_organizer_local_llm.scanner import Scanner
 from python_organizer_local_llm.sensitive import sensitive_filename, safe_suggestion
 from python_organizer_local_llm.settings import EnvironmentSettings, load_environment_settings
 
-DEFAULT_CONFIG = "config.yaml"
+DEFAULT_CONFIG = None
 
 
 def configure_logging(verbose: bool = False) -> None:
@@ -51,7 +51,7 @@ class Organizer:
 
     def __init__(
         self,
-        config_file: str = DEFAULT_CONFIG,
+        config_file: Optional[str] = DEFAULT_CONFIG,
         force: bool = False,
         limit: Optional[int] = None,
         runtime_settings: Optional[EnvironmentSettings] = None,
@@ -69,22 +69,23 @@ class Organizer:
         if self.limit is not None and self.limit < 1:
             raise ValueError("--limit must be greater than zero.")
 
-        config_path = Path(config_file).expanduser().resolve()
-        if not config_path.is_file():
-            raise FileNotFoundError(
-                f"Configuration file does not exist: {config_path}"
-            )
-
-        # Resolve the config path once and pass the exact same file to every
-        # component. This prevents PyCharm/container working-directory changes
-        # from making Database, Classifier, Scanner, and Nextcloud load different
-        # config.yaml files.
-        self.config_file = str(config_path)
+        # App Store installs use built-in defaults and need no config.yaml.
+        # An explicitly supplied YAML file remains available as a local/legacy
+        # override and is resolved once so every component sees the same file.
+        if config_file:
+            config_path = Path(config_file).expanduser().resolve()
+            if not config_path.is_file():
+                raise FileNotFoundError(
+                    f"Configuration file does not exist: {config_path}"
+                )
+            self.config_file = str(config_path)
+        else:
+            self.config_file = None
         self.database = Database(self.config_file)
         # AppAPI mounts a per-ExApp persistent volume and supplies its path in
         # APP_PERSISTENT_STORAGE. Prefer it for SQLite so Review/History/Settings
         # survive container replacement and upgrades. Manual/Compose deployments
-        # keep using the database.path value from config.yaml.
+        # keep using the built-in database path (or an explicit YAML override).
         if self.runtime_settings.persistent_storage:
             self.database.path = (
                 Path(self.runtime_settings.persistent_storage) / "ai_organizer.db"
@@ -489,8 +490,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--config",
         default=DEFAULT_CONFIG,
         help=(
-            "Path to configuration file "
-            f"(default: {DEFAULT_CONFIG})"
+            "Optional YAML override for built-in defaults. "
+            "No configuration file is required by default."
         ),
     )
 

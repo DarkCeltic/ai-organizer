@@ -10,12 +10,13 @@ from typing import Dict, List, Optional
 from urllib.parse import quote, urljoin
 
 import requests
-import yaml
 
 from python_organizer_local_llm.sensitive import sensitive_filename, sensitive_content
 from python_organizer_local_llm.ocr import recognize_pdf, OCRProcessingError
 from python_organizer_local_llm.file_types import BY_EXTENSION
 from python_organizer_local_llm.settings import EnvironmentSettings, load_environment_settings
+from python_organizer_local_llm.appapi_auth import outgoing_headers
+from python_organizer_local_llm.config_defaults import load_config
 
 
 class NextcloudClient:
@@ -33,19 +34,23 @@ class NextcloudClient:
 
     def __init__(
             self,
-            config_file: str = "config.yaml",
+            config_file: Optional[str] = None,
             runtime_settings: Optional[EnvironmentSettings] = None,
     ):
         self.log = logging.getLogger("nextcloud")
-        self.config = self._load_config(config_file)
+        self.config = load_config(config_file)
         runtime = runtime_settings or load_environment_settings(load_env_file=False)
+        self.runtime_settings = runtime
+        self.appapi_mode = bool(runtime.app_secret)
 
         cfg = self.config.get("nextcloud", {})
 
-        # Environment variables are the public-Docker path. YAML fallbacks are
-        # retained for backward compatibility with existing private installs.
+        # Managed ExApps authenticate to Nextcloud with APP_SECRET. Standalone
+        # PyCharm/CLI runs retain Basic Auth using a user app password.
         self.base_url = str(runtime.nextcloud_url or cfg.get("url", "")).rstrip("/")
-        self.username = str(runtime.nextcloud_username or cfg.get("username", ""))
+        self.username = str(
+            runtime.app_user or runtime.nextcloud_username or cfg.get("username", "")
+        ).strip()
         self.password = str(
             runtime.nextcloud_app_password
             or cfg.get("app_password", cfg.get("password", ""))
@@ -55,19 +60,20 @@ class NextcloudClient:
 
         if not self.base_url:
             raise RuntimeError(
-                "NEXTCLOUD_URL is required. Set it in .env/container environment."
+                "NEXTCLOUD_URL is required. AppAPI supplies it in managed ExApps; "
+                "set it in .env for local PyCharm/CLI runs."
             )
 
-        if not self.username:
-            raise RuntimeError(
-                "NEXTCLOUD_USERNAME is required. Set it in .env/container environment."
-            )
-
-        if not self.password:
-            raise RuntimeError(
-                "NEXTCLOUD_APP_PASSWORD is required. Use a Nextcloud app password "
-                "rather than your normal account password."
-            )
+        if not self.appapi_mode:
+            if not self.username:
+                raise RuntimeError(
+                    "NEXTCLOUD_USERNAME is required for standalone local mode."
+                )
+            if not self.password:
+                raise RuntimeError(
+                    "NEXTCLOUD_APP_PASSWORD is required for standalone local mode. "
+                    "Use a Nextcloud app password rather than your normal account password."
+                )
 
         organizer_cfg = self.config.get("python_organizer_local_llm", {})
         scanner_cfg = self.config.get("scanner", {})
@@ -100,13 +106,40 @@ class NextcloudClient:
         # File ID + ETag prevents reusing an obsolete OCR result after modification.
         self._ocr_cache = {}
         self.session = requests.Session()
-        self.session.auth = (self.username, self.password)
         self.session.headers.update(
             {
-                "User-Agent": "AI-Organizer/0.1",
+                "User-Agent": f"AI-Organizer/{runtime.app_version}",
                 "OCS-APIRequest": "true",
             }
         )
+        if self.appapi_mode:
+            self.session.auth = None
+            if self.username:
+                self.set_active_user(self.username)
+        else:
+            self.session.auth = (self.username, self.password)
+
+    @property
+    def auth_mode(self) -> str:
+        return "appapi" if getattr(self, "appapi_mode", False) else "basic"
+
+    def set_active_user(self, user_id: str) -> None:
+        """Bind the user whose Files tree AppAPI requests act on behalf of."""
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            raise ValueError("Nextcloud user ID cannot be blank")
+        self.username = user_id
+        if self.appapi_mode:
+            self.session.auth = None
+            self.session.headers.update(outgoing_headers(self.runtime_settings, user_id))
+
+    def _require_active_user(self) -> str:
+        if not self.username:
+            raise RuntimeError(
+                "AI Organizer has not received a Nextcloud user context yet. "
+                "Open AI Organizer as an administrator once to finish initialization."
+            )
+        return self.username
 
     def get_scan_paths(self) -> List[str]:
         return [self._normalize_path(path) for path in self.scan_paths]
@@ -529,7 +562,8 @@ class NextcloudClient:
 
     def _dav_url(self, path: str) -> str:
         path = self._normalize_path(path)
-        encoded_username = quote(self.username, safe="")
+        username = self._require_active_user()
+        encoded_username = quote(username, safe="")
         encoded_path = "/".join(quote(part, safe="") for part in path.strip("/").split("/"))
 
         base = f"{self.base_url}/remote.php/dav/files/{encoded_username}"
@@ -545,7 +579,7 @@ class NextcloudClient:
         parsed = urlparse(href)
         raw_path = unquote(parsed.path)
 
-        marker = f"/remote.php/dav/files/{self.username}"
+        marker = f"/remote.php/dav/files/{self._require_active_user()}"
         index = raw_path.find(marker)
 
         if index >= 0:
@@ -671,21 +705,6 @@ class NextcloudClient:
 
         return path
 
-    @staticmethod
-    def _load_config(config_file: str) -> Dict:
-        try:
-            with open(config_file, "r", encoding="utf-8") as handle:
-                config = yaml.safe_load(handle) or {}
-        except FileNotFoundError as exc:
-            raise RuntimeError(f"Configuration file not found: {config_file}") from exc
-        except yaml.YAMLError as exc:
-            raise RuntimeError(f"Invalid YAML configuration: {config_file}") from exc
-
-        if not isinstance(config, dict):
-            raise RuntimeError("Configuration root must be a YAML mapping.")
-
-        return config
-
     def find_file_by_id(self, file_id):
         """
         Find a file anywhere in the connected user's active
@@ -706,7 +725,7 @@ class NextcloudClient:
         if not file_id.isdecimal():
             raise ValueError("Invalid Nextcloud file ID")
 
-        username = escape(quote(self.username, safe=""))
+        username = escape(quote(self._require_active_user(), safe=""))
 
         body = f"""<?xml version="1.0" encoding="UTF-8"?>
         <d:searchrequest

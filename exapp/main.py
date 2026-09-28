@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import logging
 from pathlib import Path
 
@@ -17,6 +16,7 @@ from exapp.routes.dashboard import router as dashboard_router
 from exapp.routes.settings import router as settings_router
 from exapp.automation import AutomationScheduler
 from python_organizer_local_llm.settings import SettingsService, load_environment_settings
+from python_organizer_local_llm.appapi_auth import outgoing_headers, user_from_incoming_header
 from python_organizer_local_llm.file_types import app_action_mimes
 from python_organizer_local_llm.organizer import Organizer, configure_logging
 
@@ -30,7 +30,6 @@ AA_VERSION = RUNTIME_SETTINGS.app_api_version
 APP_SECRET = RUNTIME_SETTINGS.app_secret
 NEXTCLOUD_URL = RUNTIME_SETTINGS.require_exapp_url()
 CONFIG_FILE = RUNTIME_SETTINGS.config_file
-APP_USER = RUNTIME_SETTINGS.app_user
 
 configure_logging(RUNTIME_SETTINGS.debug_logging)
 log = logging.getLogger("exapp")
@@ -49,6 +48,20 @@ async def log_http_error(request, exc):
     )
 
     return await http_exception_handler(request, exc)
+
+
+@app.middleware("http")
+async def bind_appapi_user_context(request: Request, call_next):
+    # Browser/API routes are ADMIN-only in info.xml. Binding here ensures the
+    # first dashboard request has a DAV user before Settings is opened.
+    if APP_SECRET:
+        user_id = user_from_incoming_header(
+            request.headers.get("AUTHORIZATION-APP-API"), APP_SECRET
+        )
+        if user_id and hasattr(app.state, "organizer"):
+            app.state.organizer.nextcloud.set_active_user(user_id)
+            app.state.organizer.database.save_app_state("service_user", user_id)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -75,6 +88,13 @@ app.state.organizer = Organizer(
     config_file=CONFIG_FILE, runtime_settings=RUNTIME_SETTINGS
 )
 app.state.organizer.database.initialize()
+# In AppAPI mode the user context arrives through authenticated proxy requests.
+# Restore the last administrator/service user so scheduled scans keep working
+# after container replacement or restart. APP_USER remains a local/manual override.
+if RUNTIME_SETTINGS.app_secret and not app.state.organizer.nextcloud.username:
+    saved_user = app.state.organizer.database.load_app_state("service_user", "")
+    if saved_user:
+        app.state.organizer.nextcloud.set_active_user(saved_user)
 app.state.settings = SettingsService(app.state.organizer)
 app.state.scheduler = AutomationScheduler(app)
 
@@ -101,26 +121,22 @@ app.include_router(dashboard_router)
 app.include_router(settings_router)
 
 
-def _appapi_headers():
-    if not APP_SECRET:
-        raise RuntimeError("APP_SECRET is not set")
-
-    token = base64.b64encode(
-        f"{APP_USER}:{APP_SECRET}".encode("utf-8")
-    ).decode("ascii")
-
-    return {
-        "OCS-APIRequest": "true",
-        "Accept": "application/json",
-        "AA-VERSION": AA_VERSION,
-        "EX-APP-ID": APP_ID,
-        "EX-APP-VERSION": APP_VERSION,
-        "AUTHORIZATION-APP-API": token,
-    }
+def _bind_appapi_user(request: Request) -> str | None:
+    """Capture the authenticated proxied user for AppAPI-backed file access."""
+    user_id = user_from_incoming_header(
+        request.headers.get("AUTHORIZATION-APP-API"), APP_SECRET
+    )
+    if user_id:
+        app.state.organizer.nextcloud.set_active_user(user_id)
+        app.state.organizer.database.save_app_state("service_user", user_id)
+    return user_id
 
 
-def _registration_user() -> str:
-    return app.state.organizer.nextcloud.username
+def _appapi_headers(user_id: str | None = None):
+    user_id = user_id or app.state.organizer.nextcloud.username
+    headers = outgoing_headers(RUNTIME_SETTINGS, user_id)
+    headers["Accept"] = "application/json"
+    return headers
 
 
 def _ocs(method, path, json=None, allow_404=False):
@@ -208,7 +224,7 @@ def register_ui() -> None:
         json={
             "name": "organizer",
             "displayName": "AI Organizer",
-            "adminRequired": 0,
+            "adminRequired": 1,
         },
     )
 
@@ -309,9 +325,10 @@ def heartbeat():
 
 
 @app.put("/enabled")
-def enabled(enabled: int = 1):
+def enabled(request: Request, enabled: int = 1):
     try:
         log.info("Received enabled state: %s", enabled)
+        _bind_appapi_user(request)
 
         app.state.scheduler.enabled = bool(int(enabled))
         if int(enabled):

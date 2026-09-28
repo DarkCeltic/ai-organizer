@@ -1,5 +1,5 @@
-# Manual/Portainer deployment. Do NOT run alongside an AppAPI-managed instance
-# of the same ExApp. Set AI_ORGANIZER_IMAGE to a Docker Hub image when desired.
+# Manual/Portainer ExApp deployment. Do NOT run alongside an AppAPI-managed
+# instance of the same ExApp. AppAPI-managed App Store installs do not need this file.
 services:
   ai-organizer:
     image: ${AI_ORGANIZER_IMAGE:-darthdragon/ai-organizer:latest}
@@ -7,24 +7,23 @@ services:
     restart: unless-stopped
     init: true
     environment:
-      AI_ORGANIZER_CONFIG: /app/config.yaml
       APP_HOST: 0.0.0.0
       APP_PORT: "23000"
       APP_PERSISTENT_STORAGE: /app/data
       NEXTCLOUD_URL: ${NEXTCLOUD_URL:?Set NEXTCLOUD_URL in .env}
-      NEXTCLOUD_APP_PASSWORD: ${NEXTCLOUD_APP_PASSWORD:?Set NEXTCLOUD_APP_PASSWORD in .env}
-      NEXTCLOUD_USERNAME: ${NEXTCLOUD_USERNAME:?Set NEXTCLOUD_USERNAME in .env}
-      OLLAMA_URL: ${OLLAMA_URL:?Set OLLAMA_URL in .env}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:?Set OLLAMA_MODEL in .env}
-      PAPERLESS_ENABLED: ${PAPERLESS_ENABLED:-false}
       APP_SECRET: ${APP_SECRET:?Supply the existing AppAPI registration secret}
+      # Optional user override for manual AppAPI testing. Normally AI Organizer
+      # learns the administrator user from the authenticated AppAPI request.
+      APP_USER: ${APP_USER:-}
+      # Optional first-run seeds. Leave blank to configure in AI Organizer Settings.
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      PAPERLESS_ENABLED: ${PAPERLESS_ENABLED:-false}
+      INBOX_PATH: ${INBOX_PATH:-/inbox}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ai_organizer_data:/app/data
-      - ${AI_ORGANIZER_CONFIG_FILE:-./config.example.yaml}:/app/config.yaml:ro
-    # No published host ports: browser access must go through Nextcloud/AppAPI.
-    # Keep the Nextcloud Docker network private; other containers on that network
-    # can otherwise bypass AppAPI's administrator access checks.
+    # No published host ports: browser access should go through Nextcloud/AppAPI.
     expose:
       - "23000"
     networks:

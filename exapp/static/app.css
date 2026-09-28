@@ -860,3 +860,49 @@
     overflow-wrap: anywhere;
 }
 #ai_organize .file-type-choice small { color: var(--organizer-muted); }
+
+
+/* First-run Ollama setup. Defaults are already seeded; only required connection
+   values are requested before analysis can begin. */
+#ai_organize .organizer-onboarding {
+    position: fixed;
+    inset: 0;
+    z-index: 10050;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--color-main-background, #fff) 35%, transparent);
+    backdrop-filter: blur(4px);
+}
+#ai_organize .organizer-onboarding.hidden { display: none; }
+#ai_organize .organizer-onboarding-card {
+    width: min(620px, 100%);
+    max-height: min(760px, calc(100vh - 48px));
+    overflow: auto;
+    display: grid;
+    gap: 14px;
+    padding: 28px;
+    border: 1px solid var(--organizer-border);
+    border-radius: 16px;
+    background: var(--organizer-card);
+    box-shadow: 0 18px 60px rgba(0, 0, 0, .24);
+}
+#ai_organize .organizer-onboarding-card h2 { margin: 0; }
+#ai_organize .organizer-onboarding-card > p { margin: 0; color: var(--organizer-muted); }
+#ai_organize .organizer-onboarding-card label:not(.settings-toggle) {
+    display: grid;
+    gap: 6px;
+    font-weight: 600;
+}
+#ai_organize .organizer-onboarding-defaults {
+    padding: 12px 14px;
+    border: 1px solid var(--organizer-border);
+    border-radius: 10px;
+    background: var(--organizer-subtle);
+}
+#ai_organize .organizer-onboarding-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 4px;
+}

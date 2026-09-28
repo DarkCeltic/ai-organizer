@@ -6,7 +6,8 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, Optional
 
-import yaml
+from python_organizer_local_llm.config_defaults import config_base_dir, load_config
+
 
 
 class Database:
@@ -14,15 +15,15 @@ class Database:
     SQLite storage for discovered files and AI suggestions.
     """
 
-    def __init__(self, config_file: str = "config.yaml"):
+    def __init__(self, config_file: Optional[str] = None):
         self.log = logging.getLogger("database")
-        self.config_file = Path(config_file).expanduser().resolve()
-        self.config = self._load_config(str(self.config_file))
+        self.config_file = Path(config_file).expanduser().resolve() if config_file else None
+        self.config = load_config(config_file)
 
         db_config = self.config.get("database", {})
         raw_path = Path(str(db_config.get("path", "data/ai_organizer.db"))).expanduser()
         if not raw_path.is_absolute():
-            raw_path = self.config_file.parent / raw_path
+            raw_path = config_base_dir(config_file) / raw_path
         self.path = raw_path.resolve()
 
     def initialize(self) -> None:
@@ -204,6 +205,25 @@ class Database:
                          ON CONFLICT(name) DO UPDATE SET value_json=excluded.value_json,
                          updated_at=CURRENT_TIMESTAMP""",
                          (json.dumps(settings, ensure_ascii=False),))
+
+    def load_app_state(self, name: str, default=None):
+        """Load small internal runtime state without mixing it into admin settings."""
+        key = f"state:{name}"
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM organizer_settings WHERE name=?", (key,)
+            ).fetchone()
+        return json.loads(row["value_json"]) if row else default
+
+    def save_app_state(self, name: str, value) -> None:
+        key = f"state:{name}"
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO organizer_settings(name, value_json) VALUES (?, ?)
+                   ON CONFLICT(name) DO UPDATE SET value_json=excluded.value_json,
+                   updated_at=CURRENT_TIMESTAMP""",
+                (key, json.dumps(value, ensure_ascii=False)),
+            )
 
     def get_automation_run(self) -> Dict:
         with self._connect() as conn:
@@ -854,25 +874,6 @@ class Database:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
-
-    @staticmethod
-    def _load_config(config_file: str) -> Dict:
-        try:
-            with open(config_file, "r", encoding="utf-8") as handle:
-                config = yaml.safe_load(handle) or {}
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                f"Configuration file not found: {config_file}"
-            ) from exc
-        except yaml.YAMLError as exc:
-            raise RuntimeError(
-                f"Invalid YAML configuration: {config_file}"
-            ) from exc
-
-        if not isinstance(config, dict):
-            raise RuntimeError("Configuration root must be a YAML mapping.")
-
-        return config
 
     def archive_missing_file(
             self,

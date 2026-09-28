@@ -4,10 +4,9 @@ import logging
 from pathlib import PurePosixPath
 from typing import Dict, Iterator, List, Optional
 
-import yaml
-
 from python_organizer_local_llm.sensitive import sensitive_filename
 from python_organizer_local_llm.file_types import BY_EXTENSION
+from python_organizer_local_llm.config_defaults import load_config
 
 
 
@@ -47,15 +46,7 @@ class Scanner:
         self.nextcloud = nextcloud
         self.database = database
 
-        config = {}
-        if config_file:
-            try:
-                with open(config_file, "r", encoding="utf-8") as handle:
-                    config = yaml.safe_load(handle) or {}
-            except FileNotFoundError:
-                self.log.warning("Scanner config file not found: %s", config_file)
-            except yaml.YAMLError as exc:
-                raise RuntimeError(f"Invalid YAML configuration: {config_file}") from exc
+        config = load_config(config_file)
 
         organizer_cfg = config.get("python_organizer_local_llm", {}) if isinstance(config, dict) else {}
         scanner_cfg = config.get("scanner", {}) if isinstance(config, dict) else {}

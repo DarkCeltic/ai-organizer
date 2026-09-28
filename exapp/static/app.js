@@ -180,6 +180,105 @@
         let fileTypeCatalog = [];
         let settingsAvailable = false;
         let settingsBusy = false;
+        let firstRunPayload = null;
+
+        const onboarding = document.createElement('div');
+        onboarding.className = 'organizer-onboarding hidden';
+        onboarding.setAttribute('role', 'dialog');
+        onboarding.setAttribute('aria-modal', 'true');
+        onboarding.setAttribute('aria-labelledby', 'organizer-onboarding-title');
+        onboarding.innerHTML = `
+            <div class="organizer-onboarding-card">
+                <span class="eyebrow">First-time setup</span>
+                <h2 id="organizer-onboarding-title">Connect AI Organizer to Ollama</h2>
+                <p>AI Organizer is installed and ready, but it needs your local Ollama server and model before it can analyze files.</p>
+                <div class="organizer-onboarding-defaults">
+                    Your scan folders, supported file types, OCR settings and Paperless routing policies already use the built-in defaults.
+                </div>
+                <label>Ollama URL
+                    <input id="onboarding-ollama-url" type="url" placeholder="http://192.168.1.2:11434" autocomplete="off">
+                </label>
+                <label>Ollama model
+                    <input id="onboarding-ollama-model" type="text" placeholder="qwen2.5:7b" autocomplete="off">
+                </label>
+                <label class="settings-toggle">
+                    <input id="onboarding-paperless" type="checkbox"> Enable Paperless integration
+                </label>
+                <label>Paperless consume folder
+                    <input id="onboarding-paperless-inbox" type="text" value="/inbox" placeholder="/inbox">
+                </label>
+                <div id="onboarding-feedback" class="settings-feedback" role="status" aria-live="polite"></div>
+                <div class="organizer-onboarding-actions">
+                    <button type="button" class="primary" id="onboarding-save">Save & continue</button>
+                    <button type="button" class="secondary" id="onboarding-advanced">Advanced settings</button>
+                    <button type="button" class="tertiary" id="onboarding-later">Configure later</button>
+                </div>
+            </div>`;
+        shell.appendChild(onboarding);
+
+        function showOnboarding(data) {
+            firstRunPayload = data;
+            const settings = data?.settings || {};
+            onboarding.querySelector('#onboarding-ollama-url').value = settings.ollama_url || '';
+            onboarding.querySelector('#onboarding-ollama-model').value = settings.model || '';
+            onboarding.querySelector('#onboarding-paperless').checked = Boolean(settings.paperless_enabled);
+            onboarding.querySelector('#onboarding-paperless-inbox').value = settings.paperless_inbox || '/inbox';
+            onboarding.querySelector('#onboarding-feedback').textContent = '';
+            onboarding.classList.remove('hidden');
+            onboarding.querySelector('#onboarding-ollama-url').focus();
+        }
+
+        function closeOnboarding() {
+            onboarding.classList.add('hidden');
+        }
+
+        async function saveOnboarding() {
+            if (!firstRunPayload?.settings || settingsBusy) return;
+            const feedback = onboarding.querySelector('#onboarding-feedback');
+            const url = onboarding.querySelector('#onboarding-ollama-url').value.trim();
+            const model = onboarding.querySelector('#onboarding-ollama-model').value.trim();
+            if (!url || !model) {
+                feedback.textContent = 'Ollama URL and model are required.';
+                feedback.classList.add('error');
+                return;
+            }
+            settingsBusy = true;
+            feedback.classList.remove('error');
+            feedback.textContent = 'Saving settings…';
+            try {
+                const settings = {
+                    ...firstRunPayload.settings,
+                    ollama_url: url,
+                    model,
+                    paperless_enabled: onboarding.querySelector('#onboarding-paperless').checked,
+                    paperless_inbox: onboarding.querySelector('#onboarding-paperless-inbox').value.trim() || '/inbox'
+                };
+                const result = await api('api/settings', {
+                    method: 'PUT', body: JSON.stringify({settings})
+                });
+                firstRunPayload.settings = result.settings;
+                firstRunPayload.configured = result.configured;
+                closeOnboarding();
+                setStatus('AI Organizer setup saved. Select a file to begin.');
+            } catch (error) {
+                feedback.classList.add('error');
+                feedback.textContent = `Setup not saved: ${error.message}`;
+            } finally {
+                settingsBusy = false;
+            }
+        }
+
+        onboarding.addEventListener('click', (event) => {
+            const button = event.target.closest('button');
+            if (!button) return;
+            if (button.id === 'onboarding-save') void saveOnboarding();
+            else if (button.id === 'onboarding-later') closeOnboarding();
+            else if (button.id === 'onboarding-advanced') {
+                closeOnboarding();
+                const settingsButton = sidebar.querySelector('[data-view="settings"]');
+                if (settingsButton) settingsButton.click();
+            }
+        });
 
         function settingsRows(container, rules) {
             container.innerHTML = rules.map((rule, i) => `
@@ -282,14 +381,14 @@
                                 >${escapeHtml((settings.paperless_never_send || []).join('\n'))}</textarea></label>
                         <p class="hint">These categories are never recommended for Paperless. They are administrator policy,
                             match the AI's document category rather than filename keywords, and take precedence over preferred categories.
-                            If this list is cleared, the values from config.yaml are restored automatically.</p>
+                            If this list is cleared, the built-in defaults are restored automatically.</p>
                         <label>Prefer Paperless (one category per line)
                             <textarea id="setting-paperless-prefer-send" rows="7"
                                 placeholder="receipt&#10;invoice&#10;statement&#10;tax"
                                 >${escapeHtml((settings.paperless_prefer_send || []).join('\n'))}</textarea></label>
                         <p class="hint">These categories recommend Paperless when the document is classified into that category.
                             Categories not listed in either policy use the AI's archival-record versus working-file heuristic.
-                            If this list is cleared, the values from config.yaml are restored automatically.
+                            If this list is cleared, the built-in defaults are restored automatically.
                             You still choose the destination manually, and Automatic Apply never sends files to Paperless.</p>
                         <p class="hint">When disabled, the AI only recommends Nextcloud. Enabling integration does not make Paperless routing automatic.</p>
                     </section>
@@ -1145,10 +1244,12 @@
         clearSelection('Select an Unprocessed file to analyze, or switch to Review, Failed or History.');
         void refreshDashboard();
         // Nextcloud AppAPI checks ADMIN access. A 403 never exposes the Settings tab.
-        void api('api/settings').then(() => {
+        void api('api/settings').then((data) => {
             settingsAvailable = true;
             const button = sidebar.querySelector('[data-view="settings"]');
             if (button) button.hidden = false;
+            fileTypeCatalog = Array.isArray(data.file_types_catalog) ? data.file_types_catalog : [];
+            if (data.configured === false) showOnboarding(data);
         }).catch((error) => {
             if (error.status !== 403 && error.status !== 401) {
                 console.warn('AI Organizer: Settings availability check failed', error);

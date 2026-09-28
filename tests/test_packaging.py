@@ -9,9 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_release_identity_is_consistent():
     tree = ET.parse(ROOT / "appinfo" / "info.xml")
     assert tree.findtext("id") == "ai_organizer"
-    assert tree.findtext("version") == "0.2.0"
+    assert tree.findtext("version") == "0.2.1"
     assert tree.findtext(".//docker-install/image") == "darthdragon/ai-organizer"
-    assert tree.findtext(".//docker-install/image-tag") == "0.2.0"
+    assert tree.findtext(".//docker-install/image-tag") == "0.2.1"
 
 
 def test_no_legacy_project_identifier_remains():

@@ -28,15 +28,15 @@ class EnvironmentSettings:
     """
 
     app_id: str = "ai_organizer"
-    app_version: str = "0.2.0"
+    app_version: str = "0.2.1"
     app_api_version: str = "4.0.0"
     app_secret: str = field(default="", repr=False)
-    app_user: str = "admin"
+    app_user: str = ""
     nextcloud_url: str = ""
     nextcloud_username: str = ""
     nextcloud_app_password: str = field(default="", repr=False)
     persistent_storage: str = ""
-    config_file: str = "config.yaml"
+    config_file: str = ""
     log_level: str = "INFO"
     ollama_url: str = ""
     ollama_model: str = ""
@@ -110,15 +110,15 @@ def load_environment_settings(*, load_env_file: bool = True) -> EnvironmentSetti
 
     return EnvironmentSettings(
         app_id=_env("APP_ID", "ai_organizer"),
-        app_version=_env("APP_VERSION", "0.2.0"),
+        app_version=_env("APP_VERSION", "0.2.1"),
         app_api_version=_env("AA_VERSION", "4.0.0"),
         app_secret=_env("APP_SECRET"),
-        app_user=_env("APP_USER", nextcloud_username or "admin"),
+        app_user=_env("APP_USER", nextcloud_username),
         nextcloud_url=nextcloud_url,
         nextcloud_username=nextcloud_username,
         nextcloud_app_password=_env("NEXTCLOUD_APP_PASSWORD"),
         persistent_storage=_env("APP_PERSISTENT_STORAGE"),
-        config_file=_env("AI_ORGANIZER_CONFIG", "config.yaml"),
+        config_file=_env("AI_ORGANIZER_CONFIG"),
         log_level=_env("LOG_LEVEL", "INFO").upper(),
         ollama_url=ollama_url,
         ollama_model=_env("OLLAMA_MODEL"),
@@ -142,7 +142,7 @@ class SettingsService:
         stored = organizer.database.load_settings()
         first_seed = not bool(stored)
         self.defaults = self._defaults(stored)
-        self.values = self.validate(self._merge_with_defaults(stored))
+        self.values = self.validate(self._merge_with_defaults(stored), allow_incomplete=True)
 
         # Persist effective settings on first initialization.  Previously the
         # service only wrote a row when it detected a non-empty Paperless-policy
@@ -150,7 +150,7 @@ class SettingsService:
         # remain empty even though the UI was using in-memory defaults.
         #
         # For existing databases, blank Paperless lists are still treated as
-        # "use config.yaml defaults" and the effective values are written back.
+        # "use built-in defaults" and the effective values are written back.
         migrated = [
             key for key in self.PAPERLESS_POLICY_KEYS
             if not (stored or {}).get(key) and self.values.get(key)
@@ -172,24 +172,23 @@ class SettingsService:
                 )
             if migrated:
                 self.log.info(
-                    "Persisted Paperless policy defaults from config.yaml: %s",
+                    "Persisted built-in Paperless policy defaults: %s",
                     ", ".join(migrated),
                 )
 
-        config_path = Path(getattr(organizer, "config_file", "config.yaml")).expanduser().resolve()
         database_path = Path(organizer.database.path).expanduser().resolve()
         config_paperless = organizer.classifier.config.get("paperless", {}) or {}
         self.log.info(
             "Settings initialized: config=%s database=%s saved_row=%s "
             "paperless_never_send=%s paperless_prefer_send=%s",
-            config_path,
+            getattr(organizer, "config_file", None) or "built-in defaults",
             database_path,
             bool(organizer.database.load_settings()),
             self.values.get("paperless_never_send", []),
             self.values.get("paperless_prefer_send", []),
         )
         self.log.info(
-            "Paperless policy loaded from config.yaml: never_send=%s prefer_send=%s",
+            "Paperless built-in policy: never_send=%s prefer_send=%s",
             config_paperless.get("never_send") or [],
             config_paperless.get("prefer_send") or [],
         )
@@ -200,9 +199,9 @@ class SettingsService:
         """Merge persisted settings over config defaults.
 
         Paperless policy lists are slightly different from ordinary settings:
-        an absent or empty persisted list means "use the values from config.yaml".
+        an absent or empty persisted list means "use the built-in values".
         This prevents an old/blank SQLite value from silently disabling the
-        administrator policy shipped in config.yaml. A non-empty persisted list
+        administrator policy shipped with AI Organizer. A non-empty persisted list
         remains an explicit UI override.
         """
         merged = {**self.defaults, **(stored or {})}
@@ -213,7 +212,7 @@ class SettingsService:
         return merged
 
     def _restore_blank_policy_defaults(self, values):
-        """Treat a blank Paperless policy textarea as "restore config defaults"."""
+        """Treat a blank Paperless policy textarea as "restore built-in defaults"."""
         restored = copy.deepcopy(values)
         for key in self.PAPERLESS_POLICY_KEYS:
             if not restored.get(key):
@@ -234,16 +233,6 @@ class SettingsService:
         model = str(
             stored.get('model') or runtime.ollama_model or ollama.get('model') or ''
         ).strip()
-        if not ollama_url:
-            raise RuntimeError(
-                'OLLAMA_URL is required for a new installation. Set it in .env/container '
-                'environment, or retain an existing saved/configured Ollama URL.'
-            )
-        if not model:
-            raise RuntimeError(
-                'OLLAMA_MODEL is required for a new installation. Set it to a model that '
-                'already exists on your Ollama server.'
-            )
         classifier = config.get('classifier', {})
         ocr = config.get('ocr', {})
         scanner = self.organizer.scanner
@@ -258,7 +247,7 @@ class SettingsService:
             'ollama_url': ollama_url,
             'model': model,
             'timeout': int(ollama.get('timeout', 180)),
-            'temperature': float(ollama.get('temperature', 0.1)),
+            'temperature': float(ollama.get('temperature', 0)),
             'max_content_chars': int(classifier.get('max_content_chars', 8000)),
             'ocr_enabled': bool(ocr.get('enabled', True)),
             'ocr_max_pages': int(ocr.get('max_pages', 10)),
@@ -308,7 +297,7 @@ class SettingsService:
         return folder == '/' or path == folder or path.startswith(folder.rstrip('/') + '/')
 
     @classmethod
-    def validate(cls, incoming):
+    def validate(cls, incoming, *, allow_incomplete=False):
         allowed = {
             'ollama_url', 'model', 'timeout', 'temperature', 'max_content_chars', 'scan_paths',
             'exclude_paths', 'schedule_enabled', 'interval_minutes', 'auto_analyze',
@@ -321,15 +310,20 @@ class SettingsService:
         v = copy.deepcopy(incoming)
         v['file_types'] = validate_ids(v['file_types'])
         url = str(v['ollama_url']).strip().rstrip('/')
-        parts = urlsplit(url)
-        if parts.scheme not in ('http',
-                                'https') or not parts.hostname or parts.username or parts.password or parts.path not in (
-                '', '/') or parts.query or parts.fragment:
-            raise ValueError('Ollama URL must be an http(s) host and optional port, without credentials or path')
+        if url:
+            parts = urlsplit(url)
+            if parts.scheme not in ('http', 'https') or not parts.hostname or parts.username or parts.password or parts.path not in (
+                    '', '/') or parts.query or parts.fragment:
+                raise ValueError('Ollama URL must be an http(s) host and optional port, without credentials or path')
+        elif not allow_incomplete:
+            raise ValueError('Enter the Ollama server URL')
         v['ollama_url'] = url
         v['model'] = str(v['model']).strip()
-        if not 1 <= len(v['model']) <= 150 or any(c.isspace() for c in v['model']):
-            raise ValueError('Select a valid Ollama model name')
+        if v['model']:
+            if len(v['model']) > 150 or any(c.isspace() for c in v['model']):
+                raise ValueError('Select a valid Ollama model name')
+        elif not allow_incomplete:
+            raise ValueError('Select an Ollama model')
         for name, low, high in [('timeout', 5, 1800), ('max_content_chars', 500, 100000),
                                 ('interval_minutes', 1, 10080), ('ocr_max_pages', 1, 100)]:
             if isinstance(v[name], bool) or not isinstance(v[name], int) or not low <= v[name] <= high:
@@ -407,13 +401,19 @@ class SettingsService:
         v['folder_rules'] = result
         return v
 
+
+    def is_configured(self):
+        """Whether the minimum first-run Ollama settings have been completed."""
+        with self.lock:
+            return bool(self.values.get('ollama_url') and self.values.get('model'))
+
     def get(self):
         with self.lock:
             return copy.deepcopy(self.values)
 
     def save(self, values):
         with self.lock:
-            # Empty Paperless policy lists mean "restore config.yaml defaults",
+            # Empty Paperless policy lists mean "restore built-in defaults",
             # not "disable all policy". The effective defaults are persisted so
             # the Settings UI immediately reflects what the classifier is using.
             validated = self.validate(self._restore_blank_policy_defaults(values))

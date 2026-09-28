@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install complete project-source replacements; never touch config, secrets or SQLite."""
+"""Install complete project-source replacements; never touch secrets or SQLite."""
 from __future__ import annotations
 import argparse
 import shutil
@@ -20,6 +20,8 @@ FILES = (
     'python_organizer_local_llm/sensitive.py',
     'python_organizer_local_llm/settings.py',
     'python_organizer_local_llm/file_types.py',
+    'python_organizer_local_llm/config_defaults.py',
+    'python_organizer_local_llm/appapi_auth.py',
     'python_organizer_local_llm/ocr.py',
     'python_organizer_local_llm/suggestion_policy.py',
 )
@@ -27,11 +29,11 @@ FILES = (
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project', type=Path, required=True,
-                        help='Existing AI Organizer project root (containing exapp/ and config.yaml).')
+                        help='Existing AI Organizer project root (containing exapp/).')
     args = parser.parse_args()
     project = args.project.expanduser().resolve()
-    if not (project / 'exapp').is_dir() or not (project / 'config.yaml').is_file():
-        parser.error('Target must be existing project root with exapp/ and config.yaml.')
+    if not (project / 'exapp').is_dir():
+        parser.error('Target must be an existing AI Organizer project root with exapp/.')
     if project == ROOT:
         parser.error('Extract release outside the project and pass the existing project as --project.')
     missing = [f for f in FILES if not (ROOT / f).is_file()]
@@ -50,7 +52,7 @@ def main():
         shutil.copy2(ROOT / rel, dest)
     print(f'Installed {len(FILES)} complete source files into {project}')
     print(f'Previous code backup: {backup}')
-    print('Configuration, .env, compose.yaml, SQLite and data directories were NOT modified.')
+    print('.env, compose.yaml, optional local YAML overrides, SQLite and data directories were NOT modified.')
     print('The running ExApp must be stopped before deployment; restart/rebuild only your existing instance.')
 
 if __name__ == '__main__':

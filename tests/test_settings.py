@@ -109,15 +109,21 @@ def test_auto_apply_skips_paperless_low_confidence_and_partial(system, monkeypat
     assert db.get_automation_run()['auto_applied'] == 1
 
 
-def test_info_xml_admin_route_and_disjoint_user_route():
+def test_info_xml_dynamic_routes_are_admin_only_for_single_database_architecture():
     import re
     tree = ET.parse(Path(__file__).resolve().parents[1] / 'appinfo/info.xml')
     routes = [(r.findtext('url'), r.findtext('access_level')) for r in tree.findall('.//routes/route')]
-    admin = next(regex for regex, level in routes if level == 'ADMIN')
-    user = next(regex for regex, level in routes if level == 'USER')
-    assert re.search(admin, '/api/settings') and re.search(admin, '/api/settings/folders')
-    assert not re.search(user, '/api/settings')
-    assert re.search(user, '/api/dashboard/review')
+    assert routes
+
+    # Frontend CSS/JS is intentionally public so Nextcloud's AppAPI asset loader
+    # can fetch registered top-menu resources. No user data is served there.
+    static_routes = [(url, level) for url, level in routes if url and url.startswith('^/static/')]
+    assert static_routes == [('^/static/.*$', 'PUBLIC')]
+
+    dynamic_routes = [(url, level) for url, level in routes if not (url and url.startswith('^/static/'))]
+    assert dynamic_routes and all(level == 'ADMIN' for _, level in dynamic_routes)
+    assert any(re.search(regex, '/api/settings') for regex, _ in routes)
+    assert any(re.search(regex, '/api/dashboard/review') for regex, _ in routes)
 
 
 def test_compose_and_config_contain_no_embedded_secret():
@@ -127,13 +133,15 @@ def test_compose_and_config_contain_no_embedded_secret():
     assert compose['services']['ai-organizer']['volumes'][0] == 'ai_organizer_data:/app/data'
     assert compose['services']['ai-organizer']['image'] == '${AI_ORGANIZER_IMAGE:-darthdragon/ai-organizer:latest}'
     dockerfile = (root / 'Dockerfile').read_text()
-    assert 'COPY config.example.yaml /app/config.yaml' in dockerfile
+    assert 'COPY config.example.yaml /app/config.yaml' not in dockerfile
+    assert not (root / 'config.example.yaml').exists()
     dockerignore = (root / '.dockerignore').read_text()
     assert 'config.yaml' in dockerignore and '.env' in dockerignore
-    config = yaml.safe_load((root / 'config.example.yaml').read_text())
+    from python_organizer_local_llm.config_defaults import DEFAULT_CONFIG
+    config = DEFAULT_CONFIG
     assert not {'url', 'username', 'app_password', 'password'} & set(config['nextcloud'])
     assert 'url' not in config['ollama'] and 'model' not in config['ollama']
-    assert 'enabled' not in config['paperless']
+    assert config['paperless']['enabled'] is False
     assert config['database']['path'] == 'data/ai_organizer.db'
 
 

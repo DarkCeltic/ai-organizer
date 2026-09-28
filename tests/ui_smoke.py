@@ -77,8 +77,8 @@ def main():
         page.locator('button[data-history-index="0"]').click()
         assert page.get_by_text('Original path', exact=True).count() == 1
         assert page.get_by_text('/AI Inbox/archived.docx').count() >= 1
-        assert page.get_by_text('Read-only history.').count() == 1
-        assert page.locator('#reanalyze').is_disabled()
+        assert page.get_by_text('Historical decisions and completed actions remain unchanged.').count() == 1
+        assert not page.locator('#reanalyze').is_disabled()
         assert page.locator('#suggestion button').count() == 0
         # Desktop geometry: sidebar | list panel | record details in one row.
         geometry = page.evaluate('''() => {

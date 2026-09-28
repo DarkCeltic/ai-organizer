@@ -1,17 +1,29 @@
-"""Create a consistent SQLite backup using the path from the actual config.yaml."""
+"""Create a consistent backup of the AI Organizer SQLite database."""
 import argparse
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-import yaml
+
+from python_organizer_local_llm.config_defaults import config_base_dir, load_config
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='config.yaml', type=Path)
+    parser.add_argument('--config', type=Path, default=None,
+                        help='Optional legacy/local YAML override.')
+    parser.add_argument('--database', type=Path, default=None,
+                        help='Explicit SQLite path (useful for AppAPI persistent storage).')
     args = parser.parse_args()
-    config = yaml.safe_load(args.config.read_text(encoding='utf-8')) or {}
-    path = Path(config.get('database', {}).get('path', '/data/python_organizer_local_llm.db'))
+
+    if args.database:
+        path = args.database.expanduser()
+    else:
+        config_name = str(args.config.expanduser()) if args.config else None
+        config = load_config(config_name)
+        path = Path(config.get('database', {}).get('path', 'data/ai_organizer.db')).expanduser()
+        if not path.is_absolute():
+            path = config_base_dir(config_name) / path
+
     if not path.is_file():
         raise FileNotFoundError(f'Refusing to create an empty database. No file at: {path}')
     destination = path.with_name(path.name + '.' + datetime.now().strftime('%Y%m%d_%H%M%S') + '.backup')

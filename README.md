@@ -4,7 +4,7 @@
 
 AI Organizer is a self-hosted [Nextcloud](https://nextcloud.com/) external app (ExApp) that uses [Ollama](https://ollama.com/) to read supported files and propose meaningful filenames, destination folders, tags, and optional routing to [Paperless-ngx](https://docs.paperless-ngx.com/). Review and edit each recommendation before applying it. A SQLite-backed history preserves previous decisions and file details so that reanalysis does not erase the past.
 
-> **Project status:** Early development (app metadata: `0.2.0`). This project has been developed and tested in a personal self-hosted environment; it is not presented as a turnkey or production-hardened release. Review recommendations and back up your Nextcloud data and organizer database before using it on important files.
+> **Project status:** Early development (app metadata: `0.2.1`). This project has been developed and tested in a personal self-hosted environment; it is not presented as a turnkey or production-hardened release. Review recommendations and back up your Nextcloud data and organizer database before using it on important files.
 
 ## Highlights
 
@@ -75,7 +75,7 @@ The sidebar switches the active view. The right side displays that view's file l
 
 - A supported Nextcloud installation with **AppAPI** configured to run ExApps. The included `info.xml` currently declares Nextcloud versions **33–34**; compatibility outside that range has not been verified here.
 - A deployment environment for the ExApp (the project's Docker/AppAPI setup, or Python for local development).
-- A reachable Ollama server with a downloaded model, such as `qwen2.5:7b`.
+- A reachable Ollama server with a downloaded model, such as `qwen2.5:7b`. Ollama can be configured after the ExApp starts.
 - A persistent location for the organizer's SQLite database.
 - **Optional:** Paperless-ngx and a consume folder accessible through the configured Nextcloud path.
 - PDF OCR support. The published Dockerfile installs OCRmyPDF plus Tesseract, Ghostscript, and qpdf so image-only PDFs can use the bounded OCR fallback.
@@ -84,48 +84,47 @@ Ollama can run on another host on your LAN. Use an address reachable **from the 
 
 ## Installation and configuration
 
-AI Organizer supports three deployment workflows. **AppAPI + HaRP is the recommended path** because it matches how an eventual App Store installation is managed. Docker Compose is available for advanced/manual deployments, and running from source is intended for development.
+AI Organizer is designed to be installed as a Nextcloud **ExApp** through AppAPI. The ExApp ID is `ai_organizer`, and the `0.2.1` manifest points AppAPI to `darthdragon/ai-organizer:0.2.1`.
 
-### Recommended: AppAPI + HaRP
+### Recommended: Nextcloud AppAPI / App Store
 
-The ExApp ID is `ai_organizer`. The release manifest points AppAPI to `darthdragon/ai-organizer:0.2.0`.
+AppAPI supplies the deployment identity and shared-secret values required by the container, including `APP_ID`, `APP_VERSION`, `APP_SECRET`, `APP_HOST`, `APP_PORT`, `APP_PERSISTENT_STORAGE`, and `NEXTCLOUD_URL`. AI Organizer uses the AppAPI shared secret for authenticated requests back to the same Nextcloud instance; a Nextcloud username and app password are **not** required in a managed ExApp deployment.
 
-AppAPI supplies the ExApp lifecycle values automatically, including `APP_ID`, `APP_VERSION`, `APP_SECRET`, `APP_HOST`, `APP_PORT`, `APP_PERSISTENT_STORAGE`, and `NEXTCLOUD_URL`. The administrator supplies only AI Organizer's deployment-specific settings:
+The container can start before Ollama is configured. On the first administrator visit, if the Ollama URL or model has not been saved, AI Organizer displays a first-run setup screen. Enter:
 
 ```text
-NEXTCLOUD_USERNAME
-NEXTCLOUD_APP_PASSWORD
-OLLAMA_URL
-OLLAMA_MODEL
-PAPERLESS_ENABLED
-INBOX_PATH            # only needed when Paperless routing is enabled/customized
+Ollama URL       http://192.168.1.2:11434
+Ollama model     qwen2.5:7b (or another model already installed in Ollama)
+Paperless        optional
+Paperless inbox  /inbox by default
 ```
 
-For a pre-App-Store installation, register the published `info.xml` with your HaRP deploy daemon and pass your environment values through AppAPI's deploy options or `--env` arguments. AppAPI then pulls the Docker image and creates the container.
+The first-run screen saves these values to the organizer's SQLite settings. Advanced settings remain available under **AI Organizer → Settings**.
 
-When HaRP variables are present, the container automatically starts the FRP client and serves FastAPI through `/tmp/exapp.sock`. For manual/Compose deployments without HaRP, it falls back to normal TCP using `APP_HOST`/`APP_PORT`.
+The manifest also declares `OLLAMA_URL`, `OLLAMA_MODEL`, `PAPERLESS_ENABLED`, and `INBOX_PATH` as optional AppAPI deploy options. They can pre-seed an installation, but they are not required for the container to boot.
 
-AI Organizer stores its SQLite database under `APP_PERSISTENT_STORAGE` when AppAPI supplies that path. This preserves Review, History, Failed records, and saved settings across container replacement and upgrades.
+AI Organizer stores its SQLite database under `APP_PERSISTENT_STORAGE` when AppAPI supplies that path. Review, History, Failed records, saved settings, and the service-user context therefore survive container replacement and upgrades.
 
-### Advanced: Docker Compose / Portainer
+> **Current access model:** `0.2.1` is administrator-only. The organizer currently has one global SQLite database and one scheduler, so the manifest intentionally restricts the UI/API and file action to administrators until per-user state separation is implemented.
 
-Copy `.env.example` to `.env`, provide your own values, and optionally copy `config.example.yaml` to `config.yaml` for non-secret behavior changes.
+### Advanced: manual AppAPI / Docker Compose
+
+`compose.yaml` is for administrators who already have a manual AppAPI registration and its `APP_SECRET`. It does not require a mounted `config.yaml`.
+
+Copy `.env.example` to `.env` and set at least:
 
 ```env
-OLLAMA_URL=http://192.168.1.2:11434
-OLLAMA_MODEL=qwen2.5:7b
-PAPERLESS_ENABLED=false
-INBOX_PATH=
-
 NEXTCLOUD_URL=http://192.168.1.2:8080
-NEXTCLOUD_USERNAME=YOUR_NEXTCLOUD_USER
-NEXTCLOUD_APP_PASSWORD=YOUR_NEXTCLOUD_APP_PASSWORD
-
-# Required only for a manually registered AppAPI ExApp.
 APP_SECRET=YOUR_EXISTING_APPAPI_SECRET
+
+# Optional first-run seeds; leave blank to use the setup screen.
+OLLAMA_URL=
+OLLAMA_MODEL=
+PAPERLESS_ENABLED=false
+INBOX_PATH=/inbox
 ```
 
-`APP_USER` is optional and defaults to `NEXTCLOUD_USERNAME`. Do not confuse the AppAPI-generated `APP_SECRET` with the Nextcloud user app password used by the direct WebDAV client.
+`APP_USER` is an optional local/manual override. In the normal AppAPI browser flow AI Organizer learns the authenticated administrator user from the AppAPI request and persists that user ID for scheduled background work.
 
 Start the manual container with:
 
@@ -133,47 +132,69 @@ Start the manual container with:
 docker compose up -d
 ```
 
-The Compose file defaults to `darthdragon/ai-organizer:latest`, stores runtime state on the `ai_organizer_data` volume, and does not publish a host port. It is intended for users who already understand manual AppAPI registration; do not run it alongside an AppAPI-managed instance of the same ExApp.
+Do not run this manual instance alongside an AppAPI-managed instance of the same ExApp.
 
-### Developer: run from source
+### Developer: run from PyCharm or source
 
-Install the Python dependencies, copy `.env.example` to `.env`, provide the required values, and run:
+There are two supported local authentication modes.
+
+**Standalone Python/PyCharm:** If the Python process talks directly to Nextcloud without AppAPI, it still needs a Nextcloud account and app password because there is no AppAPI shared secret authenticating those WebDAV/OCS requests:
+
+```env
+NEXTCLOUD_URL=http://192.168.1.2:8080
+NEXTCLOUD_USERNAME=YOUR_NEXTCLOUD_USERNAME
+NEXTCLOUD_APP_PASSWORD=YOUR_NEXTCLOUD_APP_PASSWORD
+APP_SECRET=
+```
+
+**Local/manual ExApp:** If you register the local process through AppAPI and provide `APP_SECRET` (plus `APP_USER` only when there is no proxied browser request yet), `NEXTCLOUD_USERNAME` and `NEXTCLOUD_APP_PASSWORD` are not required.
+
+Ollama values can be left blank for the FastAPI UI and entered in the first-run screen:
 
 ```bash
 uvicorn exapp.main:app --host 0.0.0.0 --port 23000
 ```
 
-For local source development with Nextcloud, register the process through a `manual-install` deploy daemon. Do not expose the development server directly to the internet.
+For the command-line organizer, configure Ollama before performing real analysis.
 
-### Configuration files
+### Built-in defaults (no `config.yaml` required)
 
-Deployment-specific addresses and credentials belong in environment variables. `config.example.yaml` contains non-secret behavior defaults such as scan roots, file types, timeouts, Paperless category policy, and the manual Docker database path.
+Production/App Store installs no longer depend on `config.yaml`. Non-secret behavior defaults live in `python_organizer_local_llm/config_defaults.py` and are seeded into SQLite on first use. The initial defaults include:
 
-The Docker image includes a sanitized `/app/config.yaml`, so building from a clean checkout never depends on a private ignored `config.yaml`. For Compose you may override it with `AI_ORGANIZER_CONFIG_FILE=./config.yaml`.
+- scan root: `/AI Inbox`
+- excluded folders: `/paperless-media`, `/inbox`, `/Photos`, `/AI Ignored`
+- allowed extensions: `pdf`, `txt`, `md`, `docx`, `odt`, `rtf`, `log`, `csv`, `json`, `xml`, `xlsx`
+- Paperless **Always keep in Nextcloud**: `resume`, `cv`, `curriculum vitae`, `cover letter`, `portfolio`, `source_code`, `project`, `template`
+- Paperless **Prefer Paperless**: `receipt`, `invoice`, `statement`, `tax`, `insurance`, `contract`, `warranty`
+- Paperless disabled by default, inbox `/inbox`
+- OCR enabled with a 10-page initial limit
+- automatic analysis/apply disabled
+
+An explicit YAML file can still be supplied with `AI_ORGANIZER_CONFIG=/path/to/override.yaml` for legacy/local development. It is optional and deep-merges over the built-in defaults; it is not part of the App Store deployment contract.
 
 ### Environment variables
 
 All direct environment access is centralized in `python_organizer_local_llm/settings.py`.
 
-| Variable | Purpose | Default |
+| Variable | Purpose | Managed ExApp behavior |
 | --- | --- | --- |
-| `OLLAMA_URL` | Ollama server reachable from the ExApp container. | none |
-| `OLLAMA_MODEL` | Ollama model to use. | none |
-| `PAPERLESS_ENABLED` | Initial Paperless integration state. | `false` |
-| `INBOX_PATH` | Paperless consume folder. May be empty when Paperless is disabled. | `/inbox` after settings initialization |
-| `NEXTCLOUD_URL` | Nextcloud base URL. AppAPI supplies this for managed deployments. | none |
-| `NEXTCLOUD_USERNAME` | Account used by the current direct WebDAV/OCS client. | none |
-| `NEXTCLOUD_APP_PASSWORD` | Nextcloud user app password for WebDAV/OCS. | none |
-| `APP_SECRET` | AppAPI shared secret. AppAPI supplies this for managed deployments. | none |
-| `APP_USER` | User ID placed in AppAPI authentication headers. | `NEXTCLOUD_USERNAME`, then `admin` |
-| `APP_ID` | ExApp identifier. AppAPI supplies this for managed deployments. | `ai_organizer` |
-| `APP_VERSION` | ExApp version. AppAPI supplies this for managed deployments. | `0.2.0` |
-| `APP_PERSISTENT_STORAGE` | AppAPI-managed persistent data path. | manual config database path when absent |
-| `AA_VERSION` | AppAPI protocol header version. | `4.0.0` |
-| `AI_ORGANIZER_CONFIG` | Non-secret YAML configuration path. | `config.yaml` |
-| `LOG_LEVEL` | Logging verbosity. | `INFO` |
+| `NEXTCLOUD_URL` | Nextcloud base URL. | Supplied by AppAPI. Required manually. |
+| `APP_SECRET` | AppAPI shared secret used for ExApp → Nextcloud authentication. | Supplied by AppAPI. |
+| `APP_USER` | Optional manual/local user-ID override for AppAPI auth. | Normally learned from authenticated AppAPI requests. |
+| `NEXTCLOUD_USERNAME` | Standalone PyCharm/CLI Basic Auth user. | Not needed with `APP_SECRET`. |
+| `NEXTCLOUD_APP_PASSWORD` | Standalone PyCharm/CLI Nextcloud app password. | Not needed with `APP_SECRET`. |
+| `OLLAMA_URL` | Optional initial Ollama server URL. | May be configured later in the first-run UI. |
+| `OLLAMA_MODEL` | Optional initial Ollama model. | May be configured later in the first-run UI. |
+| `PAPERLESS_ENABLED` | Optional initial Paperless state. | Defaults to `false`. |
+| `INBOX_PATH` | Initial Paperless consume folder. | Defaults to `/inbox`. |
+| `APP_ID` | ExApp identifier. | Supplied by AppAPI; default `ai_organizer`. |
+| `APP_VERSION` | ExApp version. | Supplied by AppAPI; default `0.2.1`. |
+| `APP_PERSISTENT_STORAGE` | Persistent ExApp data path. | Supplied by AppAPI. |
+| `AA_VERSION` | AppAPI protocol header version. | Supplied by AppAPI when available; default `4.0.0`. |
+| `AI_ORGANIZER_CONFIG` | Optional legacy/local YAML override. | Blank by default. |
+| `LOG_LEVEL` | Logging verbosity. | `INFO`. |
 
-`OLLAMA_URL` must be reachable from inside the container. `localhost` normally points to the AI Organizer container itself, not to an Ollama service on another machine.
+`OLLAMA_URL` must be reachable from inside the ExApp container. `localhost` normally refers to the AI Organizer container itself, not an Ollama service on another host.
 
 ## Paperless behavior
 
@@ -181,7 +202,7 @@ Paperless integration is **optional**. When enabled, the organizer suggests rout
 
 For a **Paperless recommendation**, the review UI offers a Paperless action and a **Keep in Nextcloud** alternative, alongside applicable apply controls. For a **Nextcloud-only recommendation**, the main combined action is simply **Apply all**; there is no redundant Keep in Nextcloud button. In either case, review the proposed destination before applying it.
 
-The **Always keep in Nextcloud** list takes priority over **Prefer Paperless**. Both lists are editable in **Settings → Paperless** and persisted in SQLite. The YAML values are only initial defaults for a new install. The selected policy is not a guarantee that AI classification will always be correct; manual review remains important.
+The **Always keep in Nextcloud** list takes priority over **Prefer Paperless**. Both lists are editable in **Settings → Paperless** and persisted in SQLite. The built-in values are the initial defaults for a new install. The selected policy is not a guarantee that AI classification will always be correct; manual review remains important.
 
 ## PDF OCR and file types
 
@@ -227,24 +248,4 @@ Issues and pull requests are welcome. When reporting a problem, include a descri
 **GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`).** See the repository's `LICENSE.md` file for the full license text. Add the full license file to the repository before publication if it is not already present. Third-party dependencies and any reused third-party code retain their respective licenses.
 
 This is an independent project and is not an official Nextcloud, Ollama, or Paperless-ngx product.
-
-
-### Paperless policy defaults
-
-When `paperless_never_send` or `paperless_prefer_send` is missing, null, or empty in persisted settings, AI Organizer imports the corresponding `config.yaml` values into SQLite during startup. The Settings UI therefore displays the same effective policy the classifier uses. Non-empty saved UI values remain explicit overrides.
-
-## Configuration paths
-
-`AI_ORGANIZER_CONFIG` may point to any config file. At startup the application resolves that file to an absolute path and passes the exact same path to the database, classifier, scanner, and Nextcloud client. Database paths in `config.yaml` are resolved relative to that config file.
-
-For a setup that works in both PyCharm and Docker, use:
-
-```yaml
-database:
-  path: "data/ai_organizer.db"
-```
-
-With a project config at `C:/.../ai-organizer/config.yaml`, PyCharm uses `<project>/data/ai_organizer.db`. In the Docker image, `/app/config.yaml` uses `/app/data/ai_organizer.db`. Avoid root-relative Windows paths such as `\data\...` unless you intentionally want a database at the drive root.
-
-Startup logs print the resolved config path, resolved database path, and the Paperless policy lists actually loaded from that config.
 
