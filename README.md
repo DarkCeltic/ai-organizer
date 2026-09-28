@@ -4,7 +4,7 @@
 
 AI Organizer is a self-hosted [Nextcloud](https://nextcloud.com/) external app (ExApp) that uses [Ollama](https://ollama.com/) to read supported files and propose meaningful filenames, destination folders, tags, and optional routing to [Paperless-ngx](https://docs.paperless-ngx.com/). Review and edit each recommendation before applying it. A SQLite-backed history preserves previous decisions and file details so that reanalysis does not erase the past.
 
-> **Project status:** Early development (app metadata: `0.1.2`). This project has been developed and tested in a personal self-hosted environment; it is not presented as a turnkey or production-hardened release. Review recommendations and back up your Nextcloud data and organizer database before using it on important files.
+> **Project status:** Early development (app metadata: `0.2.0`). This project has been developed and tested in a personal self-hosted environment; it is not presented as a turnkey or production-hardened release. Review recommendations and back up your Nextcloud data and organizer database before using it on important files.
 
 ## Highlights
 
@@ -88,7 +88,7 @@ AI Organizer supports three deployment workflows. **AppAPI + HaRP is the recomme
 
 ### Recommended: AppAPI + HaRP
 
-The ExApp ID is `ai_organizer`. The release manifest points AppAPI to `darthdragon/ai-organizer:0.1.2`.
+The ExApp ID is `ai_organizer`. The release manifest points AppAPI to `darthdragon/ai-organizer:0.2.0`.
 
 AppAPI supplies the ExApp lifecycle values automatically, including `APP_ID`, `APP_VERSION`, `APP_SECRET`, `APP_HOST`, `APP_PORT`, `APP_PERSISTENT_STORAGE`, and `NEXTCLOUD_URL`. The administrator supplies only AI Organizer's deployment-specific settings:
 
@@ -167,7 +167,7 @@ All direct environment access is centralized in `python_organizer_local_llm/sett
 | `APP_SECRET` | AppAPI shared secret. AppAPI supplies this for managed deployments. | none |
 | `APP_USER` | User ID placed in AppAPI authentication headers. | `NEXTCLOUD_USERNAME`, then `admin` |
 | `APP_ID` | ExApp identifier. AppAPI supplies this for managed deployments. | `ai_organizer` |
-| `APP_VERSION` | ExApp version. AppAPI supplies this for managed deployments. | `0.1.2` |
+| `APP_VERSION` | ExApp version. AppAPI supplies this for managed deployments. | `0.2.0` |
 | `APP_PERSISTENT_STORAGE` | AppAPI-managed persistent data path. | manual config database path when absent |
 | `AA_VERSION` | AppAPI protocol header version. | `4.0.0` |
 | `AI_ORGANIZER_CONFIG` | Non-secret YAML configuration path. | `config.yaml` |

@@ -28,7 +28,7 @@ class EnvironmentSettings:
     """
 
     app_id: str = "ai_organizer"
-    app_version: str = "0.1.2"
+    app_version: str = "0.2.0"
     app_api_version: str = "4.0.0"
     app_secret: str = field(default="", repr=False)
     app_user: str = "admin"
@@ -110,7 +110,7 @@ def load_environment_settings(*, load_env_file: bool = True) -> EnvironmentSetti
 
     return EnvironmentSettings(
         app_id=_env("APP_ID", "ai_organizer"),
-        app_version=_env("APP_VERSION", "0.1.2"),
+        app_version=_env("APP_VERSION", "0.2.0"),
         app_api_version=_env("AA_VERSION", "4.0.0"),
         app_secret=_env("APP_SECRET"),
         app_user=_env("APP_USER", nextcloud_username or "admin"),
